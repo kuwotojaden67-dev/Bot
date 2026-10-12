@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/components/EquityCurveChart.tsx","./src/components/PriceStructureChart.tsx","./src/components/SetupWizardModal.tsx","./src/services/api.ts"],"version":"5.6.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/EquityChart.tsx","./src/components/EquityCurveChart.tsx","./src/components/PriceChart.tsx","./src/components/PriceStructureChart.tsx","./src/components/SetupWizardModal.tsx","./src/services/api.ts","./src/services/tradingKnowledgeEngine.ts"],"version":"5.6.3"}

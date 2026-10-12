@@ -1,1757 +1,1904 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Activity,
-  BarChart3,
-  Bot,
-  CheckCircle2,
-  Clock,
-  Cpu,
-  Database,
-  History,
-  Layers,
-  Lock,
-  Pause,
-  Play,
-  Plug,
-  RefreshCw,
-  ShieldAlert,
   ShieldCheck,
-  Sliders,
+  ShieldAlert,
+  Play,
+  Pause,
   Square,
+  Sliders,
+  BarChart3,
+  History,
   Terminal,
-  TrendingUp,
+  Lock,
+  Unlock,
   AlertOctagon,
-  AlertTriangle,
-  FlaskConical,
+  RefreshCw,
+  CheckCircle2,
   XCircle,
+  Layers,
+  TrendingUp,
+  Cpu,
+  Wifi,
+  WifiOff,
+  BookOpen,
+  Sparkles,
+  Compass,
+  Zap,
 } from 'lucide-react';
 import { api } from './services/api';
-import { PriceStructureChart } from './components/PriceStructureChart';
-import { EquityCurveChart } from './components/EquityCurveChart';
-import { SetupWizardModal } from './components/SetupWizardModal';
+import { PriceChart } from './components/PriceChart';
+import { EquityChart } from './components/EquityChart';
+import { SYMBOL_SPECS, TRADING_KNOWLEDGE_ENCYCLOPEDIA } from './services/tradingKnowledgeEngine';
 
-type TabId =
+type TabKey =
   | 'overview'
-  | 'live'
+  | 'knowledge'
+  | 'setup'
   | 'strategy'
   | 'risk'
   | 'backtest'
-  | 'history'
+  | 'trades'
   | 'diagnostics';
 
+const ALL_SYMBOLS = Object.keys(SYMBOL_SPECS);
+const ALL_TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1'];
+
 export function App() {
-  const [activeTab, setActiveTab] = useState<TabId>('overview');
+  const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [overview, setOverview] = useState<any>(null);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('EURUSD');
+  const [selectedTimeframe, setSelectedTimeframe] = useState<string>('M15');
+  const [symbolAnalysis, setSymbolAnalysis] = useState<any>(null);
   const [strategyConfig, setStrategyConfig] = useState<any>(null);
   const [riskConfig, setRiskConfig] = useState<any>(null);
+  const [tradesHistory, setTradesHistory] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [logFilter, setLogFilter] = useState<string>('ALL');
+  const [selectedKnowledgeId, setSelectedKnowledgeId] = useState<string>('ict');
 
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('EURUSD');
-  const [symbolAnalysis, setSymbolAnalysis] = useState<any>(null);
-  const [recentSignals, setRecentSignals] = useState<any[]>([]);
-  const [tradeHistory, setTradeHistory] = useState<any[]>([]);
-  const [diagnosticLogs, setDiagnosticLogs] = useState<any[]>([]);
-  const [logCategoryFilter, setLogCategoryFilter] = useState<string>('ALL');
+  // Connection Wizard form
+  const [connForm, setConnForm] = useState({
+    broker: 'ICMarkets / Pepperstone / FTMO',
+    server: 'MetaQuotes-Demo',
+    login: 10054821,
+    password: '',
+    terminal_path: 'C:\\Program Files\\MetaTrader 5\\terminal64.exe',
+    trading_mode: 'DEMO',
+    save_in_vault: true,
+    use_saved_password: false,
+    use_ea_bridge: false,
+  });
+  const [connMessage, setConnMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-  // Backtest state
-  const [btSymbol, setBtSymbol] = useState<string>('EURUSD');
-  const [btTimeframe, setBtTimeframe] = useState<string>('M15');
-  const [btStrategyMode, setBtStrategyMode] = useState<string>('ALL_CONFLUENCE');
-  const [btBars, setBtBars] = useState<number>(240);
-  const [btInitialBalance, setBtInitialBalance] = useState<number>(10000);
-  const [btSpreadPips, setBtSpreadPips] = useState<number>(1.2);
-  const [btCommission, setBtCommission] = useState<number>(7.0);
-  const [btSlippage, setBtSlippage] = useState<number>(2.0);
-  const [backtestReport, setBacktestReport] = useState<any>(null);
-  const [btRunning, setBtRunning] = useState<boolean>(false);
-
-  // Small Account ($5) Evaluator state
-  const [smallAcctBalance, setSmallAcctBalance] = useState<number>(5.0);
-  const [smallAcctSymbol, setSmallAcctSymbol] = useState<string>('EURUSD');
-  const [smallAcctRiskPct, setSmallAcctRiskPct] = useState<number>(0.5);
-  const [smallAcctSlPips, setSmallAcctSlPips] = useState<number>(15.0);
+  // Small Account ($5) Simulator State
+  const [smallAcctForm, setSmallAcctForm] = useState({
+    balance_usd: 5.0,
+    leverage: 100,
+    symbol: 'EURUSD',
+    risk_per_trade_pct: 0.5,
+    stop_loss_pips: 15.0,
+  });
   const [smallAcctResult, setSmallAcctResult] = useState<any>(null);
 
-  // Live Trading Explicit Authorization form
-  const [livePhrase, setLivePhrase] = useState<string>('');
-  const [ackRisk, setAckRisk] = useState<boolean>(false);
-  const [ackDemoTested, setAckDemoTested] = useState<boolean>(false);
+  // Backtest Form & Results
+  const [btForm, setBtForm] = useState({
+    symbol: 'EURUSD',
+    timeframe: 'M15',
+    bars: 260,
+    initial_balance: 10000,
+    spread_pips: 1.0,
+    commission_per_lot_usd: 7.0,
+    slippage_pips: 0.3,
+  });
+  const [btResult, setBtResult] = useState<any>(null);
+  const [btLoading, setBtLoading] = useState(false);
 
-  // Modals & UI status
-  const [isWizardOpen, setIsWizardOpen] = useState<boolean>(false);
-  const [confirmCloseAll, setConfirmCloseAll] = useState<boolean>(false);
-  const [bannerMessage, setBannerMessage] = useState<{
-    type: 'info' | 'success' | 'error';
-    text: string;
-  } | null>(null);
-  const [scenarioResult, setScenarioResult] = useState<any>(null);
+  // Modals / Confirmations
+  const [showLiveModal, setShowLiveModal] = useState(false);
+  const [livePhrase, setLivePhrase] = useState('');
+  const [liveAckRisk, setLiveAckRisk] = useState(false);
+  const [liveAckDemo, setLiveAckDemo] = useState(false);
+  const [confirmCloseAll, setConfirmCloseAll] = useState(false);
+  const [executionFeedback, setExecutionFeedback] = useState<string | null>(null);
 
-  const loadAllData = useCallback(async () => {
+  const loadSymbolAnalysis = useCallback(
+    async (sym: string, tf?: string) => {
+      try {
+        const res = await api.getSymbolAnalysis(sym, tf || selectedTimeframe);
+        setSymbolAnalysis(res);
+      } catch (e) {
+        console.error('Failed loading symbol analysis', e);
+      }
+    },
+    [selectedTimeframe],
+  );
+
+  const loadAll = useCallback(async () => {
     try {
-      const [ov, sCfg, rCfg, analysis, sigs, trades, logs] = await Promise.all([
-        api.getOverview(),
+      const ov = await api.bootstrap();
+      setOverview(ov);
+      if (ov?.vault_profile?.has_saved_credentials) {
+        setConnForm((prev) => ({
+          ...prev,
+          broker: ov.vault_profile.broker || prev.broker,
+          server: ov.vault_profile.server || prev.server,
+          login: ov.vault_profile.login || prev.login,
+          terminal_path: ov.vault_profile.terminal_path || prev.terminal_path,
+          trading_mode: ov.vault_profile.trading_mode || prev.trading_mode,
+          use_saved_password: true,
+        }));
+      }
+      const [strat, risk, tr, lg, sa] = await Promise.all([
         api.getStrategyConfig(),
         api.getRiskConfig(),
-        api.getSymbolAnalysis(selectedSymbol),
-        api.getRecentSignals(),
         api.getTradeHistory(),
-        api.getDiagnosticLogs(logCategoryFilter),
-      ]);
-      setOverview(ov);
-      setStrategyConfig(sCfg);
-      setRiskConfig(rCfg);
-      setSymbolAnalysis(analysis);
-      setRecentSignals(sigs.signals || []);
-      setTradeHistory(trades.trades || []);
-      setDiagnosticLogs(logs.logs || []);
-    } catch (err: any) {
-      console.error('Data refresh error:', err);
-    }
-  }, [selectedSymbol, logCategoryFilter]);
-
-  useEffect(() => {
-    let ws: WebSocket | null = null;
-    const init = async () => {
-      try {
-        const ov = await api.bootstrap();
-        setOverview(ov);
-        await loadAllData();
-        // Run initial small-account ($5) check and initial backtest so data is ready
-        const sa = await api.evaluateSmallAccount({
+        api.getDiagnosticLogs('ALL'),
+        api.evaluateSmallAccount({
           balance_usd: 5.0,
           leverage: 100,
           symbol: 'EURUSD',
           risk_per_trade_pct: 0.5,
           stop_loss_pips: 15.0,
-        });
-        setSmallAcctResult(sa);
+        }),
+      ]);
+      setStrategyConfig(strat);
+      setRiskConfig(risk);
+      setTradesHistory(tr.trades || []);
+      setLogs(lg.logs || []);
+      setSmallAcctResult(sa);
+      await loadSymbolAnalysis('EURUSD', 'M15');
+    } catch (err) {
+      console.error('Bootstrap error:', err);
+    }
+  }, [loadSymbolAnalysis]);
 
-        const bt = await api.runBacktest({
-          symbol: 'EURUSD',
-          timeframe: 'M15',
-          strategy_mode: 'ALL_CONFLUENCE',
-          bars: 240,
-          initial_balance: 10000,
-          leverage: 100,
-          spread_pips: 1.2,
-          commission_per_lot_usd: 7.0,
-          slippage_points: 2.0,
-          out_of_sample_pct: 0.3,
-        });
-        setBacktestReport(bt);
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
 
-        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${proto}//${window.location.host}/ws/live`);
-        ws.onmessage = (ev) => {
-          try {
-            const payload = JSON.parse(ev.data);
-            setOverview(payload);
-          } catch {
-            // ignore parse errors
+  // WebSocket live stream
+  useEffect(() => {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/ws/live`;
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'LIVE_OVERVIEW' && msg.data) {
+            setOverview(msg.data);
           }
-        };
-      } catch (err: any) {
-        setBannerMessage({ type: 'error', text: `Initialization error: ${err.message}` });
+        } catch {
+          // ignore
+        }
+      };
+    } catch {
+      // fallback polling
+    }
+    const timer = setInterval(async () => {
+      try {
+        const ov = await api.getOverview();
+        setOverview(ov);
+      } catch {
+        // ignore
       }
-    };
-    init();
+    }, 5000);
     return () => {
       if (ws) ws.close();
+      clearInterval(timer);
     };
   }, []);
 
-  useEffect(() => {
-    api.getSymbolAnalysis(selectedSymbol).then(setSymbolAnalysis).catch(() => {});
-  }, [selectedSymbol]);
-
-  useEffect(() => {
-    api.getDiagnosticLogs(logCategoryFilter).then((r) => setDiagnosticLogs(r.logs || [])).catch(() => {});
-  }, [logCategoryFilter]);
-
-  const handleBotAction = async (action: 'START' | 'PAUSE' | 'STOP', mode: string = 'SIGNAL_ONLY') => {
-    try {
-      await api.controlBot(action, mode);
-      await loadAllData();
-      setBannerMessage({
-        type: 'success',
-        text: `Bot state updated: ${action} (${mode})`,
-      });
-    } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
-    }
+  const handleSelectSymbolAndTimeframe = async (sym: string, tf: string = selectedTimeframe) => {
+    setSelectedSymbol(sym);
+    setSelectedTimeframe(tf);
+    await loadSymbolAnalysis(sym, tf);
   };
 
-  const handleEvaluateAndExecute = async (autoExec: boolean) => {
+  const handleConnectMT5 = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setConnMessage(null);
     try {
-      const res = await api.evaluateAndExecute(selectedSymbol, autoExec);
-      await loadAllData();
-      if (autoExec && res.execution) {
-        if (res.execution.executed) {
-          setBannerMessage({
-            type: 'success',
-            text: `Order Executed (#${res.execution.ticket}): ${res.signal.action} ${res.execution.trade.volume} lot ${selectedSymbol} @ ${res.execution.trade.entry_price}`,
-          });
-        } else {
-          setBannerMessage({
-            type: 'error',
-            text: `Order Blocked (${res.execution.code}): ${res.execution.message}`,
-          });
-        }
+      const res = await api.connectMT5(connForm);
+      const ov = await api.getOverview();
+      setOverview(ov);
+      setConnForm((p) => ({ ...p, password: '' }));
+      if (res.connection?.is_connected) {
+        setConnMessage({
+          type: 'ok',
+          text: `Connected to ${res.connection.broker} (${res.connection.server}).`,
+        });
       } else {
-        setBannerMessage({
-          type: 'info',
-          text: `Evaluated ${selectedSymbol}: Signal=${res.signal.action} (Confluence Score: ${res.signal.score}/100)`,
+        setConnMessage({
+          type: 'err',
+          text: `${res.connection?.last_error_code}: ${res.connection?.last_error_message}`,
         });
       }
     } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
+      setConnMessage({ type: 'err', text: err.message });
     }
   };
 
-  const handleCloseAllPositions = async () => {
+  const handleEnablePaperHarness = async (balance: number = 10000) => {
+    setConnMessage(null);
     try {
-      const res = await api.closePositions({ confirmed: true });
-      setConfirmCloseAll(false);
-      await loadAllData();
-      setBannerMessage({
-        type: 'info',
-        text: `Closed ${res.closed_count} open position(s).`,
+      await api.enablePaperHarness({ initial_balance: balance, leverage: 100, currency: 'USD' });
+      const ov = await api.getOverview();
+      setOverview(ov);
+      await loadSymbolAnalysis(selectedSymbol, selectedTimeframe);
+      setConnMessage({
+        type: 'ok',
+        text:
+          balance <= 10
+            ? `Activated $${balance.toFixed(2)} Micro-Account Harness! Notice how the Un-Bypassable Risk Engine automatically blocks unsafe 0.01 lot entries.`
+            : `Activated Interactive Demo Test Harness ($${balance.toLocaleString()} balance, 1:100 leverage).`,
       });
     } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
+      setConnMessage({ type: 'err', text: err.message });
     }
   };
 
-  const handleCloseSinglePosition = async (ticket: number) => {
+  const handleDisconnect = async (forget: boolean) => {
     try {
-      const res = await api.closePositions({ confirmed: true, ticket });
-      await loadAllData();
-      setBannerMessage({
-        type: res.closed ? 'success' : 'error',
-        text: res.closed
-          ? `Closed position #${ticket} | Realized P&L: $${res.realized_pnl?.toFixed(2) ?? '0.00'}`
-          : res.message || 'Close failed',
+      await api.disconnectMT5(forget);
+      const ov = await api.getOverview();
+      setOverview(ov);
+      setConnMessage({
+        type: 'ok',
+        text: forget
+          ? 'Disconnected and wiped encrypted credentials from vault.'
+          : 'Disconnected from session.',
       });
     } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
+      setConnMessage({ type: 'err', text: err.message });
     }
   };
 
-  const handleEmergencyStop = async (active: boolean, closeAll: boolean = false) => {
+  const handleBotControl = async (action: 'START' | 'PAUSE' | 'STOP', mode: string = 'DEMO_AUTO') => {
+    setExecutionFeedback(null);
+    try {
+      await api.controlBot(action, mode);
+      const ov = await api.getOverview();
+      setOverview(ov);
+      setExecutionFeedback(`Bot status updated: ${action} (${mode})`);
+    } catch (err: any) {
+      setExecutionFeedback(`Bot Control Error: ${err.message}`);
+    }
+  };
+
+  const handleEvaluateAndExecute = async (autoExecute: boolean) => {
+    setExecutionFeedback(null);
+    try {
+      const res = await api.evaluateAndExecute(selectedSymbol, autoExecute);
+      await loadSymbolAnalysis(selectedSymbol, selectedTimeframe);
+      const [ov, tr, lg] = await Promise.all([
+        api.getOverview(),
+        api.getTradeHistory(),
+        api.getDiagnosticLogs(logFilter),
+      ]);
+      setOverview(ov);
+      setTradesHistory(tr.trades || []);
+      setLogs(lg.logs || []);
+      if (autoExecute) {
+        if (res.execution?.executed) {
+          setExecutionFeedback(
+            `Order Executed: ${res.signal.action} ${res.signal.lot_size} lots ${selectedSymbol} @ ${res.signal.entry_price} (Ticket #${res.execution.ticket})`,
+          );
+        } else {
+          setExecutionFeedback(
+            `Execution Blocked/Skipped: ${res.execution?.message || res.signal?.rejections?.join(', ') || 'Signal is WAIT'}`,
+          );
+        }
+      } else {
+        setExecutionFeedback(
+          `8-Module Signal Evaluated for ${selectedSymbol} (${selectedTimeframe}): ${res.signal.action} (Score ${res.signal.score}/100)`,
+        );
+      }
+    } catch (err: any) {
+      setExecutionFeedback(`Error: ${err.message}`);
+    }
+  };
+
+  const handleEmergencyStop = async (active: boolean, closeAll: boolean) => {
     try {
       await api.setEmergencyStop({
         active,
         close_existing_positions: closeAll,
         confirmed: true,
       });
-      await loadAllData();
-      setBannerMessage({
-        type: active ? 'error' : 'success',
-        text: active
-          ? 'EMERGENCY STOP ENGAGED: All new order entries are strictly blocked.'
+      const ov = await api.getOverview();
+      setOverview(ov);
+      await loadSymbolAnalysis(selectedSymbol, selectedTimeframe);
+      setExecutionFeedback(
+        active
+          ? 'EMERGENCY KILL-SWITCH ENGAGED: All new entries blocked.'
           : 'Emergency Stop disengaged.',
-      });
+      );
     } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
+      setExecutionFeedback(`Emergency Stop Error: ${err.message}`);
     }
   };
 
-  const handleRunBacktest = async () => {
-    setBtRunning(true);
+  const handleClosePosition = async (ticket?: number) => {
     try {
-      const rep = await api.runBacktest({
-        symbol: btSymbol,
-        timeframe: btTimeframe,
-        strategy_mode: btStrategyMode,
-        bars: Number(btBars),
-        initial_balance: Number(btInitialBalance),
-        leverage: 100,
-        spread_pips: Number(btSpreadPips),
-        commission_per_lot_usd: Number(btCommission),
-        slippage_points: Number(btSlippage),
-        out_of_sample_pct: 0.3,
-      });
-      setBacktestReport(rep);
-      await loadAllData();
-      setBannerMessage({
-        type: 'success',
-        text: `Backtest Completed on ${btSymbol} (${btTimeframe}): ${rep.total_trades} trades | Net Profit: $${rep.net_profit?.toFixed(2)}`,
-      });
+      await api.closePositions({ confirmed: true, ticket });
+      setConfirmCloseAll(false);
+      const [ov, tr] = await Promise.all([api.getOverview(), api.getTradeHistory()]);
+      setOverview(ov);
+      setTradesHistory(tr.trades || []);
+      setExecutionFeedback(ticket ? `Closed position #${ticket}.` : 'Closed all open positions.');
     } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
+      setExecutionFeedback(`Close Position Error: ${err.message}`);
+    }
+  };
+
+  const handleRunBacktest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBtLoading(true);
+    try {
+      const res = await api.runBacktest(btForm);
+      setBtResult(res);
+    } catch (err: any) {
+      alert(`Backtest error: ${err.message}`);
     } finally {
-      setBtRunning(false);
+      setBtLoading(false);
     }
   };
 
-  const handleEvaluateSmallAccount = async () => {
-    try {
-      const res = await api.evaluateSmallAccount({
-        balance_usd: Number(smallAcctBalance),
-        leverage: 100,
-        symbol: smallAcctSymbol,
-        risk_per_trade_pct: Number(smallAcctRiskPct),
-        stop_loss_pips: Number(smallAcctSlPips),
-      });
-      setSmallAcctResult(res);
-    } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
-    }
+  const handleSmallAccountCheck = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = await api.evaluateSmallAccount(smallAcctForm);
+    setSmallAcctResult(res);
   };
 
-  const handleSaveStrategyConfig = async () => {
-    try {
-      await api.updateStrategyConfig(strategyConfig);
-      await loadAllData();
-      setBannerMessage({ type: 'success', text: 'Strategy Center configuration saved.' });
-    } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
-    }
-  };
-
-  const handleSaveRiskConfig = async () => {
-    try {
-      await api.updateRiskConfig(riskConfig);
-      await loadAllData();
-      setBannerMessage({ type: 'success', text: 'Risk Center limits saved.' });
-    } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
-    }
-  };
-
-  const handleAuthorizeLive = async () => {
-    try {
-      await api.authorizeLive({
-        confirmation_phrase: livePhrase,
-        acknowledged_risk: ackRisk,
-        demo_tested: ackDemoTested,
-      });
-      setLivePhrase('');
-      await loadAllData();
-      setBannerMessage({
-        type: 'success',
-        text: 'Live Trading Mode explicitly authorized for this session.',
-      });
-    } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
-    }
-  };
-
-  const handleRunErrorScenario = async (scenario: string) => {
-    try {
-      const res = await api.testErrorScenario(scenario);
-      setScenarioResult(res);
-      await loadAllData();
-    } catch (err: any) {
-      setBannerMessage({ type: 'error', text: err.message });
-    }
-  };
-
-  const conn = overview?.connection || {};
+  const conn = overview?.connection;
   const acct = overview?.account;
-  const openPositions = overview?.open_positions || [];
-  const botState = overview?.bot_state || { status: 'STOPPED', execution_mode: 'SIGNAL_ONLY' };
-  const isEmergency = Boolean(overview?.emergency_stop_active);
   const sig = symbolAnalysis?.signal;
+  const activeKnowledge =
+    TRADING_KNOWLEDGE_ENCYCLOPEDIA.find((k) => k.id === selectedKnowledgeId) ||
+    TRADING_KNOWLEDGE_ENCYCLOPEDIA[0];
 
   return (
-    <div className="min-h-screen bg-[#080a0f] text-slate-100 flex flex-col">
-      {/* Top Institutional Header & Bot Control Bar */}
-      <header className="sticky top-0 z-30 bg-[#0c0f18]/95 backdrop-blur border-b border-[#1c2336] px-5 py-3">
-        <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-4">
-          {/* Brand & Connection Badge */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-600/25">
-                <Bot className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold tracking-tight text-base text-white">
-                    2REAL AI TRADER
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30 font-mono-num">
-                    MT5 AUTONOMOUS v1.0
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  ICT · SMC · FVG · Volume Profile · Fibonacci · Un-Bypassable Risk Guard
-                </p>
-              </div>
+    <div className="min-h-screen flex flex-col text-slate-100">
+      {/* Top Institutional Command Header */}
+      <header className="sticky top-0 z-30 bg-[#050914]/90 backdrop-blur-xl border-b border-slate-800/80 px-5 py-3">
+        <div className="max-w-[1640px] mx-auto flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 via-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-cyan-500/25 border border-cyan-400/30">
+              <Cpu className="w-5 h-5 text-white" />
             </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-extrabold tracking-wider text-white">
+                  2REAL AI TRADER
+                </h1>
+                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold">
+                  v2.5 QUANT PRO
+                </span>
+                <span className="hidden md:inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                  <Sparkles className="w-3 h-3" /> 8-Module Confluence Engine
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                ICT • SMC • FVG • True Price-Bin POC • Breakout • Candlesticks • Fib OTE • Un-Bypassable Risk Guard
+              </p>
+            </div>
+          </div>
 
-            {/* Connection Status Pill */}
+          {/* Live Status Indicators & Emergency Kill Switch */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Connection Badge */}
             <div
-              onClick={() => setIsWizardOpen(true)}
-              className={`cursor-pointer px-3 py-1.5 rounded-xl border text-xs flex items-center gap-2 transition ${
-                conn.is_real_mt5_terminal
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                  : conn.is_paper_harness
-                  ? 'bg-purple-500/15 border-purple-500/35 text-purple-200'
-                  : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+              onClick={() => setActiveTab('setup')}
+              className={`cursor-pointer flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
+                conn?.is_real_mt5_terminal
+                  ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
+                  : conn?.is_paper_harness
+                  ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-300'
+                  : 'bg-amber-500/10 border-amber-500/40 text-amber-300'
               }`}
             >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  conn.is_real_mt5_terminal
-                    ? 'bg-emerald-400 animate-pulse'
-                    : conn.is_paper_harness
-                    ? 'bg-purple-400 animate-pulse'
-                    : 'bg-amber-400'
-                }`}
-              />
-              <span className="font-semibold">
-                {conn.is_real_mt5_terminal
-                  ? `MT5 CONNECTED (${conn.server})`
-                  : conn.is_paper_harness
-                  ? 'OFFLINE DEMO TEST HARNESS'
-                  : 'MT5 DISCONNECTED'}
+              {conn?.is_connected ? (
+                <Wifi className="w-3.5 h-3.5" />
+              ) : (
+                <WifiOff className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {conn?.is_real_mt5_terminal
+                  ? `MT5 Live IPC: ${conn.server}`
+                  : conn?.is_paper_harness
+                  ? 'Demo Quant Harness Active'
+                  : 'MT5 Disconnected (Click to Setup)'}
               </span>
             </div>
-          </div>
 
-          {/* Primary Bot Control Buttons (Section 2) */}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setIsWizardOpen(true)}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow shadow-blue-600/30"
-            >
-              <Plug className="w-3.5 h-3.5" /> Connect / Setup MT5
-            </button>
+            {/* Session Badge */}
+            <div className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-slate-900/90 border border-slate-800 text-slate-300">
+              <Compass className="w-3.5 h-3.5 text-cyan-400" />
+              <span>{overview?.market_session || 'LONDON / NY SESSION'}</span>
+            </div>
 
+            {/* Live Trading Lock Status */}
             <button
-              onClick={() =>
-                handleBotAction(
-                  'START',
-                  conn.is_connected ? 'DEMO_AUTO' : 'SIGNAL_ONLY',
-                )
-              }
-              className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-1.5"
-            >
-              <Play className="w-3.5 h-3.5" /> Start Bot
-            </button>
-
-            <button
-              onClick={() => handleBotAction('PAUSE')}
-              className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-medium flex items-center gap-1.5"
-            >
-              <Pause className="w-3.5 h-3.5" /> Pause Bot
-            </button>
-
-            <button
-              onClick={() => handleBotAction('STOP')}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600/50 text-slate-200 text-xs font-medium flex items-center gap-1.5"
-            >
-              <Square className="w-3.5 h-3.5" /> Stop Bot
-            </button>
-
-            <button
-              onClick={() => setConfirmCloseAll(true)}
-              className="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-medium"
-            >
-              Close Positions ({openPositions.length})
-            </button>
-
-            <button
-              onClick={() => handleEmergencyStop(!isEmergency, false)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border ${
-                isEmergency
-                  ? 'bg-rose-600 text-white border-rose-400 animate-pulse'
-                  : 'bg-rose-950/60 hover:bg-rose-900/70 border-rose-500/50 text-rose-200'
+              onClick={() => setShowLiveModal(true)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                overview?.live_trading_authorized
+                  ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
+                  : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
               }`}
             >
-              <AlertOctagon className="w-3.5 h-3.5" />
-              {isEmergency ? 'EMERGENCY STOP ACTIVE' : 'Emergency Stop'}
+              {overview?.live_trading_authorized ? (
+                <>
+                  <Unlock className="w-3.5 h-3.5 text-rose-400" />
+                  <span>LIVE UNLOCKED</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>LIVE LOCKED (SAFE)</span>
+                </>
+              )}
             </button>
 
-            <button
-              onClick={loadAllData}
-              title="Refresh Account & Market Information"
-              className="p-1.5 rounded-lg bg-[#161c2d] hover:bg-[#1f2840] border border-[#26314d] text-slate-300"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Navigation Tabs (7 Mandatory Chrome Dashboard Pages) */}
-        <div className="max-w-[1600px] mx-auto mt-3 pt-2 border-t border-[#161c2c] flex flex-wrap items-center justify-between gap-2">
-          <nav className="flex flex-wrap items-center gap-1">
-            {[
-              { id: 'overview', label: '1. Overview', icon: Activity },
-              { id: 'live', label: '2. Live Trading', icon: TrendingUp },
-              { id: 'strategy', label: '3. Strategy Center', icon: Layers },
-              { id: 'risk', label: '4. Risk Center & $5 Guard', icon: ShieldCheck },
-              { id: 'backtest', label: '5. Backtesting & OOS', icon: BarChart3 },
-              { id: 'history', label: '6. Trade History', icon: History },
-              { id: 'diagnostics', label: '7. Logs & Diagnostics', icon: Terminal },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const isAct = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as TabId)}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition ${
-                    isAct
-                      ? 'bg-gradient-to-r from-blue-600/25 to-purple-600/25 border border-blue-500/40 text-white'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-[#131826]'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5 text-blue-400" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
-
-          <div className="flex items-center gap-3 text-[11px] text-slate-400 font-mono-num">
-            <span>Bot Status: <strong className="text-blue-300">{botState.status}</strong></span>
-            <span>·</span>
-            <span>Session: <strong className="text-purple-300">{overview?.market_session || 'LONDON / NY'}</strong></span>
+            {/* Emergency Kill Switch */}
+            {overview?.emergency_stop_active ? (
+              <button
+                onClick={() => handleEmergencyStop(false, false)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-slate-950 hover:bg-amber-400 transition cursor-pointer"
+              >
+                <AlertOctagon className="w-4 h-4" />
+                RESET EMERGENCY STOP
+              </button>
+            ) : (
+              <button
+                onClick={() => handleEmergencyStop(true, true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30 transition cursor-pointer"
+              >
+                <AlertOctagon className="w-4 h-4" />
+                EMERGENCY STOP
+              </button>
+            )}
           </div>
         </div>
       </header>
 
-      {/* Optional Notification Banner */}
-      {bannerMessage && (
-        <div className="max-w-[1600px] w-full mx-auto px-5 mt-3">
-          <div
-            className={`px-4 py-2.5 rounded-xl border text-xs flex items-center justify-between ${
-              bannerMessage.type === 'success'
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
-                : bannerMessage.type === 'error'
-                ? 'bg-rose-500/10 border-rose-500/30 text-rose-200'
-                : 'bg-blue-500/10 border-blue-500/30 text-blue-200'
-            }`}
-          >
-            <span>{bannerMessage.text}</span>
-            <button onClick={() => setBannerMessage(null)} className="text-slate-400 hover:text-white ml-4">
-              ✕
-            </button>
-          </div>
+      {/* Multi-Asset Institutional Live Quote Ticker Strip */}
+      <div className="bg-[#070c18] border-b border-slate-800/80 px-5 py-2 overflow-x-auto">
+        <div className="max-w-[1640px] mx-auto flex items-center gap-2">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mr-1 shrink-0">
+            INSTITUTIONAL WATCHLIST:
+          </span>
+          {ALL_SYMBOLS.map((sym) => {
+            const q = overview?.quotes?.[sym];
+            const spec = SYMBOL_SPECS[sym];
+            const isSelected = selectedSymbol === sym;
+            return (
+              <button
+                key={sym}
+                onClick={() => handleSelectSymbolAndTimeframe(sym, selectedTimeframe)}
+                className={`flex items-center gap-2.5 px-3 py-1 rounded-lg text-xs font-mono border transition shrink-0 cursor-pointer ${
+                  isSelected
+                    ? 'bg-cyan-500/15 border-cyan-500/50 text-white shadow-sm shadow-cyan-500/10'
+                    : 'bg-slate-900/70 border-slate-800/90 text-slate-300 hover:border-slate-700'
+                }`}
+              >
+                <span className="font-bold text-cyan-400">{sym}</span>
+                <span className="text-slate-200">
+                  {q ? q.bid.toFixed(spec.digits) : spec.base_price.toFixed(spec.digits)}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
+                  {q ? q.spread_pips : spec.typical_spread_pips}p
+                </span>
+              </button>
+            );
+          })}
         </div>
-      )}
+      </div>
 
-      {/* Confirmation Modal for Closing All Positions */}
-      {confirmCloseAll && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
-          <div className="bg-[#121726] border border-rose-500/40 rounded-xl max-w-md w-full p-5 space-y-4">
-            <div className="flex items-center gap-2.5 text-rose-400 font-bold text-sm">
-              <AlertTriangle className="w-5 h-5" /> Confirm Close All Open Positions
-            </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Are you sure you want to close all <strong>{openPositions.length}</strong> open position(s) at current market prices?
-            </p>
-            <div className="flex justify-end gap-2">
+      {/* Navigation Bar */}
+      <nav className="bg-[#080d1a]/90 border-b border-slate-800/80 px-5">
+        <div className="max-w-[1640px] mx-auto flex items-center gap-1 overflow-x-auto">
+          {[
+            { id: 'overview', label: 'Trading Terminal & Chart', icon: Activity },
+            { id: 'knowledge', label: 'Trading Knowledge & Blueprints (All 8)', icon: BookOpen },
+            { id: 'setup', label: 'MT5 Connection Wizard', icon: Wifi },
+            { id: 'strategy', label: '8-Module Strategy Center', icon: Layers },
+            { id: 'risk', label: 'Risk Engine & $5 Guard', icon: ShieldCheck },
+            { id: 'backtest', label: 'Zero-Lookahead Backtester', icon: BarChart3 },
+            { id: 'trades', label: 'Positions & Ledger', icon: History },
+            { id: 'diagnostics', label: 'Diagnostics & Error Harness', icon: Terminal },
+          ].map((item) => {
+            const Icon = item.icon;
+            const active = activeTab === item.id;
+            return (
               <button
-                onClick={() => setConfirmCloseAll(false)}
-                className="px-3.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs"
+                key={item.id}
+                onClick={() => setActiveTab(item.id as TabKey)}
+                className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition whitespace-nowrap cursor-pointer ${
+                  active
+                    ? 'border-cyan-400 text-cyan-300 bg-cyan-500/10'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                }`}
               >
-                Cancel
+                <Icon className="w-4 h-4" />
+                {item.label}
               </button>
-              <button
-                onClick={handleCloseAllPositions}
-                className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold"
-              >
-                Confirm Close All
-              </button>
-            </div>
+            );
+          })}
+        </div>
+      </nav>
+
+      {/* Feedback Banner */}
+      {executionFeedback && (
+        <div className="bg-cyan-950/80 border-b border-cyan-500/40 px-5 py-2 text-xs text-cyan-200 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Zap className="w-3.5 h-3.5 text-cyan-400" />
+            <span>{executionFeedback}</span>
           </div>
+          <button
+            onClick={() => setExecutionFeedback(null)}
+            className="text-cyan-400 hover:text-white font-bold ml-4 cursor-pointer"
+          >
+            ✕
+          </button>
         </div>
       )}
 
       {/* Main Content Container */}
-      <main className="max-w-[1600px] w-full mx-auto px-5 py-5 flex-1 space-y-5">
-        {/* ==================== PAGE 1: OVERVIEW ==================== */}
+      <main className="flex-1 max-w-[1640px] w-full mx-auto p-5 space-y-5">
+        {/* ================= TAB 1: OVERVIEW & LIVE TERMINAL ================= */}
         {activeTab === 'overview' && (
-          <div className="space-y-5">
-            {/* Honest Connection Status Banner when Disconnected */}
-            {!conn.is_connected && (
-              <div className="bg-[#111624] border border-amber-500/30 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-                <div className="space-y-1 max-w-3xl">
-                  <div className="flex items-center gap-2 text-amber-300 text-xs font-bold uppercase tracking-wider">
-                    <AlertTriangle className="w-4 h-4" /> Honest MT5 Telemetry — No Active Terminal Connection
+          <>
+            {/* Honest Disconnected Banner with Instant Demo Harness Action */}
+            {!conn?.is_connected && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-amber-300 font-semibold text-sm">
+                    <ShieldAlert className="w-4 h-4" />
+                    <span>
+                      MetaTrader 5 Desktop Terminal Not Attached ({conn?.last_error_code || 'DISCONNECTED'})
+                    </span>
                   </div>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    2REAL AI TRADER never fabricates live broker balances or fake MT5 connections. Account telemetry below shows{' '}
-                    <code className="text-amber-200">— (Not Connected)</code> until you connect your MetaTrader 5 desktop terminal
-                    or explicitly activate the <strong>Offline Demo Test Harness</strong> ($10,000 or $5.00 Small Account) for local dry-run testing.
+                  <p className="text-xs text-slate-300 max-w-4xl">
+                    2REAL AI TRADER never fabricates fake broker connections. Connect your local MT5 terminal in the Setup Wizard, or activate the{' '}
+                    <strong className="text-cyan-300">Interactive Quant Harness ($10,000 or $5 Micro-Account)</strong>{' '}
+                    to test all 8 strategy modules, confluence scoring, and risk protection right now.
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2.5">
                   <button
-                    onClick={() => setIsWizardOpen(true)}
-                    className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+                    onClick={() => handleEnablePaperHarness(10000)}
+                    className="px-3.5 py-2 rounded-lg text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition cursor-pointer shadow-lg shadow-cyan-500/20"
                   >
-                    Open MT5 Connection Wizard
+                    Activate $10,000 Demo Harness
                   </button>
                   <button
-                    onClick={async () => {
-                      await api.enablePaperHarness({ initial_balance: 10000, leverage: 100, currency: 'USD' });
-                      await loadAllData();
-                    }}
-                    className="px-3.5 py-2 rounded-lg bg-purple-600/25 hover:bg-purple-600/40 border border-purple-500/40 text-purple-200 text-xs font-semibold"
+                    onClick={() => handleEnablePaperHarness(5)}
+                    className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition cursor-pointer"
                   >
-                    Activate $10k Offline Demo Harness
+                    Test $5.00 Micro Account Guard
                   </button>
                 </div>
               </div>
             )}
 
-            {/* 10 Overview KPI Cards required by Section 11 */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Connection Status</div>
-                <div className="mt-1 text-sm font-bold text-white flex items-center gap-2">
-                  {conn.connection_state || 'DISCONNECTED'}
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400 truncate">
-                  {conn.is_connected ? `${conn.broker} (${conn.login})` : 'Click Connect to MT5'}
-                </div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Account Balance</div>
-                <div className="mt-1 text-lg font-bold font-mono-num text-white">
-                  {acct ? `$${Number(acct.balance).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '— (Not Connected)'}
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400">
-                  {acct ? `${acct.currency} · Leverage 1:${acct.leverage}` : 'Awaiting MT5 / Harness'}
-                </div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Account Equity</div>
-                <div className="mt-1 text-lg font-bold font-mono-num text-blue-300">
-                  {acct ? `$${Number(acct.equity).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400">
-                  Margin Level: {acct ? `${acct.margin_level}%` : '—'}
-                </div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Free Margin</div>
-                <div className="mt-1 text-lg font-bold font-mono-num text-slate-100">
-                  {acct ? `$${Number(acct.free_margin).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400">
-                  Used Margin: {acct ? `$${Number(acct.margin).toFixed(2)}` : '—'}
-                </div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Floating Profit / Loss</div>
-                <div
-                  className={`mt-1 text-lg font-bold font-mono-num ${
-                    !acct
-                      ? 'text-slate-400'
-                      : acct.floating_pnl > 0
+            {/* Account Metrics Bar */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+              {[
+                {
+                  label: 'Account Balance',
+                  value: acct ? `$${acct.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—',
+                  sub: acct ? `${acct.currency} • 1:${acct.leverage}` : 'Disconnected',
+                },
+                {
+                  label: 'Live Equity',
+                  value: acct ? `$${acct.equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—',
+                  sub: acct ? `Mode: ${conn?.trading_mode}` : 'No Feed',
+                },
+                {
+                  label: 'Floating P&L',
+                  value: acct ? `${acct.floating_pnl >= 0 ? '+' : ''}$${acct.floating_pnl.toFixed(2)}` : '—',
+                  color: acct
+                    ? acct.floating_pnl >= 0
                       ? 'text-emerald-400'
-                      : acct.floating_pnl < 0
-                      ? 'text-rose-400'
-                      : 'text-slate-200'
-                  }`}
-                >
-                  {acct ? `${acct.floating_pnl >= 0 ? '+' : ''}$${Number(acct.floating_pnl).toFixed(2)}` : '—'}
+                      : 'text-rose-400'
+                    : 'text-slate-300',
+                  sub: `${overview?.open_positions?.length || 0} Open Positions`,
+                },
+                {
+                  label: 'Used / Free Margin',
+                  value: acct ? `$${acct.margin.toFixed(2)}` : '—',
+                  sub: acct ? `Free: $${acct.free_margin.toFixed(2)}` : '—',
+                },
+                {
+                  label: 'Today Realized P&L',
+                  value:
+                    overview?.today_realized_pnl !== undefined
+                      ? `${overview.today_realized_pnl >= 0 ? '+' : ''}$${overview.today_realized_pnl.toFixed(2)}`
+                      : '$0.00',
+                  color:
+                    (overview?.today_realized_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400',
+                  sub: `Max Daily Cap: ${riskConfig?.max_daily_loss_pct || 2.0}%`,
+                },
+                {
+                  label: 'Current Drawdown',
+                  value: `${overview?.current_drawdown_pct || 0}%`,
+                  sub: `Hard Cap: ${riskConfig?.max_overall_drawdown_pct || 5.0}%`,
+                },
+                {
+                  label: 'Selected Timeframe',
+                  value: `${selectedSymbol} (${selectedTimeframe})`,
+                  sub: `HTF Bias: ${sig?.htf_bias || 'NEUTRAL'} (${sig?.htf_timeframe || 'H4'})`,
+                },
+                {
+                  label: 'Bot Execution Engine',
+                  value: overview?.bot_state?.status || 'STOPPED',
+                  color: overview?.bot_state?.status?.startsWith('RUNNING')
+                    ? 'text-emerald-400'
+                    : 'text-amber-300',
+                  sub: `Mode: ${overview?.bot_state?.execution_mode || 'SIGNAL_ONLY'}`,
+                },
+              ].map((m, idx) => (
+                <div key={idx} className="quant-card quant-card-interactive rounded-xl p-3.5">
+                  <div className="text-[11px] text-slate-400">{m.label}</div>
+                  <div className={`text-base font-bold font-mono mt-1 ${m.color || 'text-white'}`}>
+                    {m.value}
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-1 truncate">{m.sub}</div>
                 </div>
-                <div className="mt-1 text-[11px] text-slate-400">
-                  Across {openPositions.length} open position(s)
-                </div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Today's Realized P&L</div>
-                <div
-                  className={`mt-1 text-lg font-bold font-mono-num ${
-                    (overview?.today_realized_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  {overview?.today_realized_pnl >= 0 ? '+' : ''}$
-                  {Number(overview?.today_realized_pnl || 0).toFixed(2)}
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400">Realized closed trades today</div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Open Positions</div>
-                <div className="mt-1 text-lg font-bold font-mono-num text-white">
-                  {openPositions.length} / {riskConfig?.max_open_positions ?? 3}
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400">Max Simultaneous Limit</div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Current Drawdown</div>
-                <div className="mt-1 text-lg font-bold font-mono-num text-amber-300">
-                  {Number(overview?.current_drawdown_pct || 0).toFixed(2)}%
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400">
-                  Hard Cap: {riskConfig?.max_overall_drawdown_pct ?? 5.0}%
-                </div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Bot Operating Mode</div>
-                <div className="mt-1 text-sm font-bold text-blue-400">
-                  {botState.status}
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400">
-                  Style: {overview?.active_timeframes?.style || 'DAY_TRADING'} ({overview?.active_timeframes?.htf}/{overview?.active_timeframes?.ltf})
-                </div>
-              </div>
-
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                <div className="text-[11px] text-slate-400">Current Market Session</div>
-                <div className="mt-1 text-xs font-bold text-purple-300">
-                  {overview?.market_session || 'LONDON / NY'}
-                </div>
-                <div className="mt-1 text-[11px] text-slate-400">
-                  Live Auth: {overview?.live_trading_authorized ? 'AUTHORIZED' : 'DISABLED (Safe)'}
-                </div>
-              </div>
+              ))}
             </div>
 
-            {/* Live Quotes & Structure Preview */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-              <div className="lg:col-span-2">
-                <PriceStructureChart
-                  symbol={selectedSymbol}
-                  timeframe={symbolAnalysis?.timeframe || 'M15'}
-                  candles={symbolAnalysis?.candles || []}
-                  signal={sig}
-                />
-              </div>
-
-              {/* Active Signal & Confluence Breakdown Card */}
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4 flex flex-col justify-between space-y-4">
-                <div>
-                  <div className="flex items-center justify-between border-b border-[#1d2538] pb-3">
-                    <div>
-                      <span className="text-xs text-slate-400">Multi-Strategy Confluence Decision</span>
-                      <h3 className="text-base font-bold text-white flex items-center gap-2">
-                        {selectedSymbol} ({symbolAnalysis?.timeframe || 'M15'})
-                      </h3>
-                    </div>
-                    <span
-                      className={`px-3 py-1 rounded-lg text-xs font-bold ${
-                        sig?.action === 'BUY'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                          : sig?.action === 'SELL'
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                          : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                      }`}
-                    >
-                      {sig?.action || 'WAIT'}
-                    </span>
-                  </div>
-
-                  {/* Score Meter */}
-                  <div className="mt-3">
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-slate-400">
-                        Confluence Score (Threshold: {sig?.min_required_score ?? 65})
-                      </span>
-                      <span className="font-mono-num font-bold text-blue-300">
-                        {sig?.score ?? 0} / 100
-                      </span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-[#192032] overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
-                        style={{ width: `${Math.min(sig?.score || 0, 100)}%` }}
-                      />
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      Rule-alignment score across 8 modules (not a win probability).
-                    </p>
-                  </div>
-
-                  {/* Trade Levels */}
-                  <div className="grid grid-cols-2 gap-2 mt-3 text-xs font-mono-num">
-                    <div className="p-2 rounded bg-[#0b0e17] border border-[#1a2133]">
-                      <span className="text-slate-400 block text-[10px]">Entry Reference</span>
-                      <span className="text-white">{sig?.entry_price ?? '—'}</span>
-                    </div>
-                    <div className="p-2 rounded bg-[#0b0e17] border border-[#1a2133]">
-                      <span className="text-slate-400 block text-[10px]">Est. Risk:Reward</span>
-                      <span className="text-blue-300">1 : {sig?.risk_reward ?? '—'}</span>
-                    </div>
-                    <div className="p-2 rounded bg-[#0b0e17] border border-[#1a2133]">
-                      <span className="text-slate-400 block text-[10px]">Stop Loss</span>
-                      <span className="text-rose-400">{sig?.stop_loss ?? '—'}</span>
-                    </div>
-                    <div className="p-2 rounded bg-[#0b0e17] border border-[#1a2133]">
-                      <span className="text-slate-400 block text-[10px]">Take Profit</span>
-                      <span className="text-emerald-400">{sig?.take_profit ?? '—'}</span>
-                    </div>
-                  </div>
-
-                  {/* Confirmations & Rejections */}
-                  <div className="mt-3 space-y-2 max-h-40 overflow-y-auto text-[11px]">
-                    {sig?.confirmations?.map((c: string, i: number) => (
-                      <div key={i} className="flex items-start gap-1.5 text-emerald-300">
-                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                        <span>{c}</span>
-                      </div>
-                    ))}
-                    {sig?.rejections?.map((r: string, i: number) => (
-                      <div key={i} className="flex items-start gap-1.5 text-amber-300">
-                        <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                        <span>{r}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-2 border-t border-[#1d2538]">
-                  <button
-                    onClick={() => handleEvaluateAndExecute(false)}
-                    className="flex-1 py-2 rounded-lg bg-[#171e30] hover:bg-[#212b44] border border-[#2a3656] text-xs font-medium text-slate-200"
-                  >
-                    Re-Evaluate Signal
-                  </button>
-                  <button
-                    onClick={() => handleEvaluateAndExecute(true)}
-                    className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white"
-                  >
-                    Execute If Approved
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ==================== PAGE 2: LIVE TRADING ==================== */}
-        {activeTab === 'live' && (
-          <div className="space-y-5">
-            {/* Active Symbol Selector & Live Quotes Strip */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-              {['EURUSD', 'XAUUSD', 'GBPUSD', 'USDJPY'].map((sym) => {
-                const q = overview?.quotes?.[sym];
-                const isSel = selectedSymbol === sym;
-                return (
-                  <div
-                    key={sym}
-                    onClick={() => setSelectedSymbol(sym)}
-                    className={`cursor-pointer rounded-xl p-4 border transition ${
-                      isSel
-                        ? 'bg-[#13192b] border-blue-500 shadow-lg shadow-blue-600/10'
-                        : 'bg-[#10141f] border-[#1e263b] hover:border-[#2e3a59]'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-sm text-white">{sym}</span>
-                      <span className="text-[11px] px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono-num">
-                        Spread: {q?.spread_pips ?? '—'} pips
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 mt-2.5 font-mono-num">
-                      <div>
-                        <span className="text-[10px] text-slate-400 block">BID</span>
-                        <span className="text-sm font-semibold text-rose-300">{q?.bid ?? '—'}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 block">ASK</span>
-                        <span className="text-sm font-semibold text-emerald-300">{q?.ask ?? '—'}</span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-              <div className="lg:col-span-2">
-                <PriceStructureChart
-                  symbol={selectedSymbol}
-                  timeframe={symbolAnalysis?.timeframe || 'M15'}
-                  candles={symbolAnalysis?.candles || []}
-                  signal={sig}
-                />
-              </div>
-
-              {/* Factor Score Breakdown */}
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4 space-y-3">
-                <h3 className="text-sm font-bold text-white border-b border-[#1d2538] pb-2">
-                  8-Module Confluence Factor Breakdown ({selectedSymbol})
-                </h3>
-                {sig?.factors &&
-                  Object.entries(sig.factors).map(([k, val]: [string, any]) => (
-                    <div key={k} className="space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-300 uppercase tracking-wide text-[11px]">
-                          {k.replace(/_/g, ' ')}
-                        </span>
-                        <span className="font-mono-num text-blue-300 font-semibold">+{val} pts</span>
-                      </div>
-                      <div className="w-full h-1.5 rounded bg-[#181f30] overflow-hidden">
-                        <div
-                          className="h-full bg-blue-500"
-                          style={{ width: `${Math.min((Number(val) / 18) * 100, 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                <div className="pt-2 border-t border-[#1d2538] text-xs space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Permitted Lot Size:</span>
-                    <span className="font-mono-num text-white font-semibold">
-                      {sig?.lot_size ?? 0} lots (Calc: {sig?.calculated_lot_size ?? 0})
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Volume Profile Source:</span>
-                    <span className="font-mono-num text-purple-300">
-                      {sig?.diagnostics?.volume_profile?.volume_type || 'TICK_VOLUME'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Open Positions Table */}
-            <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-bold text-white">
-                  Current Open Positions ({openPositions.length})
-                </h3>
-                <span className="text-xs text-slate-400">
-                  Execution Source: {conn.connection_state}
-                </span>
-              </div>
-              {openPositions.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400">
-                  No open positions currently active.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="text-slate-400 border-b border-[#1d2538]">
-                      <tr>
-                        <th className="py-2 px-3">Ticket</th>
-                        <th className="py-2 px-3">Symbol</th>
-                        <th className="py-2 px-3">Direction</th>
-                        <th className="py-2 px-3">Volume</th>
-                        <th className="py-2 px-3">Entry Price</th>
-                        <th className="py-2 px-3">Stop Loss</th>
-                        <th className="py-2 px-3">Take Profit</th>
-                        <th className="py-2 px-3">Floating P&L</th>
-                        <th className="py-2 px-3">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#181f30] font-mono-num">
-                      {openPositions.map((pos: any) => (
-                        <tr key={pos.ticket}>
-                          <td className="py-2.5 px-3 text-slate-300">#{pos.ticket}</td>
-                          <td className="py-2.5 px-3 font-bold text-white">{pos.symbol}</td>
-                          <td className="py-2.5 px-3">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                                pos.direction === 'BUY'
-                                  ? 'bg-emerald-500/20 text-emerald-300'
-                                  : 'bg-rose-500/20 text-rose-300'
-                              }`}
-                            >
-                              {pos.direction}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3">{pos.volume}</td>
-                          <td className="py-2.5 px-3">{pos.entry_price}</td>
-                          <td className="py-2.5 px-3 text-rose-400">{pos.stop_loss}</td>
-                          <td className="py-2.5 px-3 text-emerald-400">{pos.take_profit}</td>
-                          <td
-                            className={`py-2.5 px-3 font-bold ${
-                              pos.floating_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                            }`}
-                          >
-                            {pos.floating_pnl >= 0 ? '+' : ''}${Number(pos.floating_pnl).toFixed(2)}
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <button
-                              onClick={() => handleCloseSinglePosition(pos.ticket)}
-                              className="px-2.5 py-1 rounded bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 text-[11px]"
-                            >
-                              Close
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ==================== PAGE 3: STRATEGY CENTER ==================== */}
-        {activeTab === 'strategy' && strategyConfig && (
-          <div className="space-y-5">
-            <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#1d2538] pb-4 mb-5">
-                <div>
-                  <h2 className="text-base font-bold text-white">
-                    Multi-Strategy & Multi-Timeframe Configuration Center
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Configure ICT, SMC, FVG, POC Volume Profile, Breakout/Fakeout, Candlestick, Fibonacci, and MTF rules.
-                  </p>
-                </div>
+            {/* Bot Execution Control Bar + Symbol & Timeframe Selector */}
+            <div className="quant-card rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-400 mr-1">Bot Controls:</span>
                 <button
-                  onClick={handleSaveStrategyConfig}
-                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+                  onClick={() => handleBotControl('START', 'SIGNAL_ONLY')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition cursor-pointer"
                 >
-                  Save Strategy Settings
+                  <Play className="w-3.5 h-3.5" /> Start Signal-Only
+                </button>
+                <button
+                  onClick={() => handleBotControl('START', 'DEMO_AUTO')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition cursor-pointer"
+                >
+                  <Play className="w-3.5 h-3.5" /> Start Demo Auto-Trader
+                </button>
+                <button
+                  onClick={() => handleBotControl('PAUSE', overview?.bot_state?.execution_mode || 'DEMO_AUTO')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition cursor-pointer"
+                >
+                  <Pause className="w-3.5 h-3.5" /> Pause Bot
+                </button>
+                <button
+                  onClick={() => handleBotControl('STOP', 'SIGNAL_ONLY')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition cursor-pointer"
+                >
+                  <Square className="w-3.5 h-3.5" /> Stop Bot
                 </button>
               </div>
 
-              {/* Multi-Timeframe & Confluence Score Controls */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div className="p-4 rounded-xl bg-[#0b0e17] border border-[#1c2336]">
-                  <label className="block text-xs font-semibold text-blue-400 mb-1.5">
-                    Multi-Timeframe Trading Mode
-                  </label>
-                  <select
-                    value={strategyConfig.trading_style}
-                    onChange={(e) =>
-                      setStrategyConfig({ ...strategyConfig, trading_style: e.target.value })
-                    }
-                    className="w-full px-3 py-2 text-xs rounded-lg bg-[#121726] border border-[#252e47] text-white"
-                  >
-                    <option value="SCALPING">Scalping (HTF: 1H · Execution: 5M)</option>
-                    <option value="DAY_TRADING">Day Trading (HTF: 4H · Execution: 15M)</option>
-                    <option value="SWING">Swing Mode (HTF: Daily · Execution: 4H)</option>
-                  </select>
-                  <label className="flex items-center gap-2 mt-2.5 text-xs text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(strategyConfig.swing_mode_enabled)}
-                      onChange={(e) =>
-                        setStrategyConfig({
-                          ...strategyConfig,
-                          swing_mode_enabled: e.target.checked,
-                        })
-                      }
-                    />
-                    Explicitly Enable Optional Swing Mode (D1/4H)
-                  </label>
+              {/* Timeframe & Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center bg-slate-950/90 p-1 rounded-lg border border-slate-800">
+                  {ALL_TIMEFRAMES.map((tf) => (
+                    <button
+                      key={tf}
+                      onClick={() => handleSelectSymbolAndTimeframe(selectedSymbol, tf)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition cursor-pointer ${
+                        selectedTimeframe === tf
+                          ? 'bg-cyan-500 text-slate-950'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {tf}
+                    </button>
+                  ))}
                 </div>
 
-                <div className="p-4 rounded-xl bg-[#0b0e17] border border-[#1c2336]">
-                  <div className="flex justify-between text-xs mb-1.5">
-                    <span className="font-semibold text-purple-400">Minimum Confluence Score</span>
-                    <span className="font-mono-num font-bold text-white">
-                      {strategyConfig.min_confluence_score} / 100
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="40"
-                    max="90"
-                    step="1"
-                    value={strategyConfig.min_confluence_score}
-                    onChange={(e) =>
-                      setStrategyConfig({
-                        ...strategyConfig,
-                        min_confluence_score: Number(e.target.value),
-                      })
-                    }
-                    className="w-full accent-blue-500"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Confluence score reflects multi-factor alignment, never a guaranteed probability of winning.
-                  </p>
-                </div>
+                <button
+                  onClick={() => handleEvaluateAndExecute(false)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Scan Confluence
+                </button>
+                <button
+                  onClick={() => handleEvaluateAndExecute(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white transition cursor-pointer shadow-lg shadow-cyan-500/20"
+                >
+                  <TrendingUp className="w-3.5 h-3.5" /> Execute If Approved
+                </button>
+              </div>
+            </div>
 
-                <div className="p-4 rounded-xl bg-[#0b0e17] border border-[#1c2336]">
-                  <label className="block text-xs font-semibold text-emerald-400 mb-1.5">
-                    Trend & Volatility Filters (ADX / ATR)
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block">Min ADX Trend</span>
-                      <input
-                        type="number"
-                        value={strategyConfig.filters?.min_adx_trend ?? 18}
-                        onChange={(e) =>
-                          setStrategyConfig({
-                            ...strategyConfig,
-                            filters: {
-                              ...strategyConfig.filters,
-                              min_adx_trend: Number(e.target.value),
-                            },
-                          })
-                        }
-                        className="w-full px-2.5 py-1.5 rounded bg-[#121726] border border-[#252e47] text-white font-mono-num"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 block">Min ATR (Pips)</span>
-                      <input
-                        type="number"
-                        value={strategyConfig.filters?.min_atr_pips ?? 3.0}
-                        onChange={(e) =>
-                          setStrategyConfig({
-                            ...strategyConfig,
-                            filters: {
-                              ...strategyConfig.filters,
-                              min_atr_pips: Number(e.target.value),
-                            },
-                          })
-                        }
-                        className="w-full px-2.5 py-1.5 rounded bg-[#121726] border border-[#252e47] text-white font-mono-num"
-                      />
-                    </div>
+            {/* Chart + 8-Module Confluence Breakdown Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* Left 8 cols: Price Chart + Open Positions */}
+              <div className="lg:col-span-8 space-y-4">
+                <PriceChart
+                  symbol={selectedSymbol}
+                  timeframe={symbolAnalysis?.timeframe || selectedTimeframe}
+                  candles={symbolAnalysis?.candles || []}
+                  overlays={sig?.chart_overlays}
+                  volumeBins={sig?.module_details?.volume_profile?.bins}
+                  entryPrice={sig?.entry_price}
+                  stopLoss={sig?.stop_loss}
+                  takeProfit={sig?.take_profit}
+                />
+
+                {/* Active Open Positions Table */}
+                <div className="quant-card rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Activity className="w-4 h-4 text-cyan-400" />
+                      Active Open Positions ({overview?.open_positions?.length || 0})
+                    </h3>
+                    {(overview?.open_positions?.length || 0) > 0 && (
+                      <div>
+                        {confirmCloseAll ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-rose-300">Confirm close all?</span>
+                            <button
+                              onClick={() => handleClosePosition(undefined)}
+                              className="px-2.5 py-1 rounded text-xs font-bold bg-rose-600 text-white cursor-pointer"
+                            >
+                              Yes, Close All
+                            </button>
+                            <button
+                              onClick={() => setConfirmCloseAll(false)}
+                              className="px-2.5 py-1 rounded text-xs bg-slate-800 text-slate-300 cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmCloseAll(true)}
+                            className="px-3 py-1 rounded-lg text-xs font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 cursor-pointer"
+                          >
+                            Close All Positions
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
+
+                  {(overview?.open_positions?.length || 0) === 0 ? (
+                    <div className="text-xs text-slate-500 py-6 text-center border border-dashed border-slate-800 rounded-lg">
+                      No open positions. Select a symbol above and click{' '}
+                      <strong className="text-cyan-300">"Execute If Approved"</strong> to place a confluence-verified order.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left">
+                        <thead className="text-slate-400 border-b border-slate-800 font-mono">
+                          <tr>
+                            <th className="py-2">Ticket</th>
+                            <th className="py-2">Symbol</th>
+                            <th className="py-2">Side</th>
+                            <th className="py-2">Lots</th>
+                            <th className="py-2">Entry</th>
+                            <th className="py-2">SL / TP</th>
+                            <th className="py-2">Floating P&L</th>
+                            <th className="py-2 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                          {overview.open_positions.map((pos: any) => (
+                            <tr key={pos.ticket} className="hover:bg-slate-800/30">
+                              <td className="py-2.5 text-slate-300">#{pos.ticket}</td>
+                              <td className="py-2.5 font-bold text-white">{pos.symbol}</td>
+                              <td className="py-2.5">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    pos.direction === 'BUY'
+                                      ? 'bg-emerald-500/20 text-emerald-300'
+                                      : 'bg-rose-500/20 text-rose-300'
+                                  }`}
+                                >
+                                  {pos.direction}
+                                </span>
+                              </td>
+                              <td className="py-2.5">{pos.volume}</td>
+                              <td className="py-2.5">{pos.entry_price}</td>
+                              <td className="py-2.5 text-slate-400">
+                                {pos.stop_loss} / {pos.take_profit}
+                              </td>
+                              <td
+                                className={`py-2.5 font-bold ${
+                                  (pos.floating_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                }`}
+                              >
+                                {(pos.floating_pnl || 0) >= 0 ? '+' : ''}$
+                                {Number(pos.floating_pnl || 0).toFixed(2)}
+                              </td>
+                              <td className="py-2.5 text-right">
+                                <button
+                                  onClick={() => handleClosePosition(pos.ticket)}
+                                  className="px-2.5 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[11px] cursor-pointer"
+                                >
+                                  Close
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Module Cards for the 7 Strategy Sub-Engines */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {[
-                  {
-                    key: 'ict',
-                    title: 'A. ICT — Inner Circle Trader',
-                    desc: 'BSL/SSL Liquidity Pools, Sweeps, Dealing Ranges, Premium/Discount, OTE & MSS.',
-                    paramKey: 'displacement_atr_mult',
-                    paramLabel: 'Displacement ATR Multiplier',
-                  },
-                  {
-                    key: 'smc',
-                    title: 'B. SMC — Smart Money Concepts',
-                    desc: 'BOS, CHoCH, Validated Order Blocks (requiring displacement), Mitigation & Supply/Demand.',
-                    paramKey: 'ob_max_age_bars',
-                    paramLabel: 'Max Order Block Age (Bars)',
-                  },
-                  {
-                    key: 'fvg',
-                    title: 'C. Fair Value Gap (FVG) Engine',
-                    desc: '3-Candle Bullish & Bearish Imbalances, Consequent Encroachment (50%) & Mitigation.',
-                    paramKey: 'min_gap_atr_ratio',
-                    paramLabel: 'Minimum FVG Gap / ATR Ratio',
-                  },
-                  {
-                    key: 'volume_profile',
-                    title: 'D. POC & Volume Profile',
-                    desc: 'Proportional price-bin volume distribution, POC, VAH/VAL (70% Value Area), HVNs & LVNs.',
-                    paramKey: 'num_bins',
-                    paramLabel: 'Price Distribution Bins',
-                  },
-                  {
-                    key: 'breakout',
-                    title: 'E. Breakout & Fakeout Engine',
-                    desc: 'Confirmed Range Breakouts, Break-and-Retest, and Liquidity Trap Fakeouts.',
-                    paramKey: 'range_lookback',
-                    paramLabel: 'Consolidation Range Lookback',
-                  },
-                  {
-                    key: 'candlesticks',
-                    title: 'F. Contextual Candlestick Engine',
-                    desc: 'Engulfing, Pin Bars, Hammer/Shooting Star, Inside Bars, Momentum & Star Reversals.',
-                    paramKey: 'pinbar_wick_ratio',
-                    paramLabel: 'Pin Bar Wick-to-Body Ratio',
-                  },
-                  {
-                    key: 'fibonacci',
-                    title: 'G. Fibonacci Confluence Engine',
-                    desc: 'Confirmed Swing Retracements (0.50, 0.618, 0.705, 0.786) aligned with OBs & FVGs.',
-                    paramKey: 'zone_tolerance_atr',
-                    paramLabel: 'Zone Tolerance (ATR Multiple)',
-                  },
-                ].map((mod) => {
-                  const modCfg = strategyConfig[mod.key] || {};
+              {/* Right 4 cols: Live Multi-Strategy Confluence Decision Card */}
+              <div className="lg:col-span-4 space-y-4">
+                <div className="quant-card rounded-xl p-4 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div>
+                      <span className="text-[11px] uppercase tracking-wider text-cyan-400 font-mono font-semibold">
+                        10-Step Confluence Verdict
+                      </span>
+                      <h3 className="text-base font-bold text-white mt-0.5">
+                        {selectedSymbol} • {symbolAnalysis?.timeframe || selectedTimeframe}
+                      </h3>
+                    </div>
+                    <div
+                      className={`px-3.5 py-1.5 rounded-xl text-sm font-extrabold font-mono border ${
+                        sig?.action === 'BUY'
+                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 glow-emerald'
+                          : sig?.action === 'SELL'
+                          ? 'bg-rose-500/20 border-rose-500/50 text-rose-300 glow-rose'
+                          : 'bg-slate-800 border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      {sig?.action || 'WAIT'}
+                    </div>
+                  </div>
+
+                  {/* Confluence Score Bar */}
+                  <div>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-slate-400">
+                        Confluence Score (Threshold: {sig?.min_required_score || 65})
+                      </span>
+                      <span className="font-mono font-bold text-cyan-300">
+                        {sig?.score || 0} / 100
+                      </span>
+                    </div>
+                    <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                      <div
+                        className={`h-full transition-all duration-300 ${
+                          (sig?.score || 0) >= (sig?.min_required_score || 65)
+                            ? 'bg-gradient-to-r from-cyan-500 to-emerald-400'
+                            : 'bg-amber-500'
+                        }`}
+                        style={{ width: `${Math.min(sig?.score || 0, 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      *Internal rule-alignment metric (0–100), never a guaranteed win probability.
+                    </p>
+                  </div>
+
+                  {/* Calculated Order & Risk Parameters */}
+                  <div className="grid grid-cols-2 gap-2.5 bg-slate-950/80 p-3 rounded-lg border border-slate-800/80 text-xs font-mono">
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">Entry Price</span>
+                      <span className="text-white font-bold">{sig?.entry_price || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">Calculated Lot Size</span>
+                      <span className="text-cyan-300 font-bold">{sig?.lot_size ?? 0} lots</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">Stop Loss (Structural)</span>
+                      <span className="text-rose-400">{sig?.stop_loss || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">Take Profit</span>
+                      <span className="text-emerald-400">{sig?.take_profit || '—'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">Reward : Risk Ratio</span>
+                      <span className="text-white">{sig?.risk_reward_ratio || 0} R</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">HTF Bias ({sig?.htf_timeframe || 'H4'})</span>
+                      <span className="text-amber-300">{sig?.htf_bias || 'NEUTRAL'}</span>
+                    </div>
+                  </div>
+
+                  {/* Per-Module Points Breakdown */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-xs font-semibold text-slate-300">
+                        8-Module Score Contributions
+                      </h4>
+                      <button
+                        onClick={() => setActiveTab('knowledge')}
+                        className="text-[11px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <BookOpen className="w-3 h-3" /> View Module Rules
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono">
+                      {sig?.score_breakdown &&
+                        Object.entries(sig.score_breakdown).map(([k, v]: [string, any]) => (
+                          <div
+                            key={k}
+                            className="flex items-center justify-between bg-slate-950/60 px-2.5 py-1.5 rounded border border-slate-800/70"
+                          >
+                            <span className="text-slate-400 truncate">{k.replace(/_/g, ' ')}</span>
+                            <span className={v > 0 ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                              +{v}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* Confluence Reasons */}
+                  <div>
+                    <h4 className="text-xs font-semibold text-emerald-400 mb-1.5 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Active Confluence Factors ({sig?.reasons?.length || 0})
+                    </h4>
+                    <ul className="space-y-1 max-h-36 overflow-y-auto text-[11px] text-slate-300 pr-1">
+                      {(sig?.reasons || []).map((r: string, i: number) => (
+                        <li
+                          key={i}
+                          className="bg-emerald-500/5 border border-emerald-500/20 rounded px-2.5 py-1"
+                        >
+                          {r}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Risk / Filter Rejections */}
+                  {(sig?.rejections?.length || 0) > 0 && (
+                    <div>
+                      <h4 className="text-xs font-semibold text-rose-400 mb-1.5 flex items-center gap-1.5">
+                        <XCircle className="w-3.5 h-3.5" /> Safety & Filter Vetoes
+                      </h4>
+                      <ul className="space-y-1 text-[11px] text-rose-200">
+                        {sig.rejections.map((r: string, i: number) => (
+                          <li
+                            key={i}
+                            className="bg-rose-500/15 border border-rose-500/30 rounded px-2.5 py-1.5 font-mono"
+                          >
+                            {r}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ================= TAB 2: TRADING KNOWLEDGE & BLUEPRINTS (ALL 8 MODULES) ================= */}
+        {activeTab === 'knowledge' && (
+          <div className="space-y-5">
+            {/* Top Banner */}
+            <div className="quant-card rounded-xl p-5 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono uppercase tracking-wider">
+                  <BookOpen className="w-4 h-4" /> Institutional Quantitative Knowledge Base
+                </div>
+                <h2 className="text-lg font-extrabold text-white mt-1">
+                  All 8 Strategy Modules, Mathematical Formulas & Live Rule Diagnostics
+                </h2>
+                <p className="text-xs text-slate-400 mt-1 max-w-4xl">
+                  Inspect how every trading concept in 2REAL AI TRADER is mathematically defined, how look-ahead bias and naive shortcuts are prevented, and see live telemetry from{' '}
+                  <strong className="text-cyan-300">{selectedSymbol} ({selectedTimeframe})</strong> right now.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedSymbol}
+                  onChange={(e) => handleSelectSymbolAndTimeframe(e.target.value, selectedTimeframe)}
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-bold text-white"
+                >
+                  {ALL_SYMBOLS.map((s) => (
+                    <option key={s} value={s}>
+                      {s} ({SYMBOL_SPECS[s].description})
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={selectedTimeframe}
+                  onChange={(e) => handleSelectSymbolAndTimeframe(selectedSymbol, e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-cyan-300"
+                >
+                  {ALL_TIMEFRAMES.map((tf) => (
+                    <option key={tf} value={tf}>
+                      {tf}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* Left 4 cols: Module Selector Cards */}
+              <div className="lg:col-span-4 space-y-2.5">
+                {TRADING_KNOWLEDGE_ENCYCLOPEDIA.map((mod) => {
+                  const isSelected = mod.id === selectedKnowledgeId;
                   return (
                     <div
-                      key={mod.key}
-                      className="p-4 rounded-xl bg-[#0b0e17] border border-[#1d2538] flex flex-col justify-between space-y-3"
+                      key={mod.id}
+                      onClick={() => setSelectedKnowledgeId(mod.id)}
+                      className={`p-3.5 rounded-xl border transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-cyan-500/15 border-cyan-400 shadow-lg shadow-cyan-500/10'
+                          : 'quant-card hover:border-slate-700'
+                      }`}
                     >
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-white">{mod.title}</h4>
-                          <input
-                            type="checkbox"
-                            checked={modCfg.enabled !== false}
-                            onChange={(e) =>
-                              setStrategyConfig({
-                                ...strategyConfig,
-                                [mod.key]: { ...modCfg, enabled: e.target.checked },
-                              })
-                            }
-                            className="accent-blue-500"
-                          />
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">{mod.desc}</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-900 text-cyan-300 border border-slate-800">
+                          {mod.code}
+                        </span>
+                        <span className="text-xs font-mono font-bold text-emerald-400">
+                          {mod.badge}
+                        </span>
                       </div>
-                      <div>
-                        <label className="block text-[10px] text-slate-400 mb-1">
-                          {mod.paramLabel}
-                        </label>
-                        <input
-                          type="number"
-                          step="0.05"
-                          value={modCfg[mod.paramKey] ?? ''}
-                          onChange={(e) =>
-                            setStrategyConfig({
-                              ...strategyConfig,
-                              [mod.key]: {
-                                ...modCfg,
-                                [mod.paramKey]: Number(e.target.value),
-                              },
-                            })
-                          }
-                          className="w-full px-2.5 py-1.5 text-xs rounded bg-[#121726] border border-[#252e47] text-white font-mono-num"
-                        />
-                      </div>
+                      <h3 className="text-sm font-bold text-white mt-2">{mod.title}</h3>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{mod.category}</p>
                     </div>
                   );
                 })}
               </div>
+
+              {/* Right 8 cols: Deep Blueprint + Live Symbol Telemetry */}
+              <div className="lg:col-span-8 space-y-4">
+                <div className="quant-card rounded-xl p-6 space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
+                    <div>
+                      <span className="text-xs font-mono text-cyan-400 font-semibold">
+                        {activeKnowledge.code} • {activeKnowledge.badge}
+                      </span>
+                      <h3 className="text-xl font-extrabold text-white mt-1">
+                        {activeKnowledge.title}
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">{activeKnowledge.category}</p>
+                    </div>
+                    <span className="px-3 py-1 rounded-full text-xs font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                      ACTIVE & VERIFIED
+                    </span>
+                  </div>
+
+                  {/* Institutional Logic */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-2">
+                      1. Institutional Theory & Core Logic
+                    </h4>
+                    <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/70 p-3.5 rounded-lg border border-slate-800">
+                      {activeKnowledge.summary}
+                    </p>
+                  </div>
+
+                  {/* Exact Mathematical Formula */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-300 mb-2">
+                      2. Exact Quantitative Formula & Confluence Weight (Zero Look-Ahead)
+                    </h4>
+                    <div className="bg-[#040711] border border-cyan-500/30 rounded-lg p-3.5 font-mono text-xs text-cyan-200 space-y-1.5">
+                      <div>{activeKnowledge.formulaOrGeometry}</div>
+                      <div className="text-[11px] text-emerald-300">
+                        Weight: {activeKnowledge.confluenceWeight}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Anti-Cheat & Integrity Guard */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-amber-300 mb-2">
+                      3. Anti-Repaint & Common Retail Traps Avoided
+                    </h4>
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3.5 text-xs text-amber-200 space-y-1.5">
+                      {activeKnowledge.commonTrapsAvoided.map((trap: string, idx: number) => (
+                        <div key={idx} className="flex items-start gap-2">
+                          <span className="text-amber-400 font-bold">✓</span>
+                          <span>{trap}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Key Concepts Checklist */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-2">
+                      4. Exact Algorithmic Rules Implemented
+                    </h4>
+                    <div className="grid grid-cols-1 gap-2">
+                      {activeKnowledge.exactAlgorithmicRules.map((concept: string, i: number) => (
+                        <div
+                          key={i}
+                          className="flex items-start gap-2 bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5 text-xs text-slate-300"
+                        >
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <span>{concept}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Live Telemetry from Selected Symbol */}
+                  <div className="border-t border-slate-800 pt-4">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2 flex items-center gap-1.5">
+                      <Activity className="w-4 h-4" />
+                      5. Live Module Output on {selectedSymbol} ({selectedTimeframe})
+                    </h4>
+                    <pre className="bg-[#04070f] border border-slate-800 rounded-lg p-3.5 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-60">
+                      {JSON.stringify(
+                        selectedKnowledgeId === 'ict'
+                          ? sig?.module_details?.ict
+                          : selectedKnowledgeId === 'smc'
+                          ? sig?.module_details?.smc
+                          : selectedKnowledgeId === 'fvg'
+                          ? sig?.module_details?.fvg
+                          : selectedKnowledgeId === 'volume_profile'
+                          ? {
+                              poc_price: sig?.module_details?.volume_profile?.poc_price,
+                              vah_price: sig?.module_details?.volume_profile?.vah_price,
+                              val_price: sig?.module_details?.volume_profile?.val_price,
+                              volume_type: sig?.module_details?.volume_profile?.volume_type,
+                              high_volume_nodes:
+                                sig?.module_details?.volume_profile?.high_volume_nodes,
+                              low_volume_nodes:
+                                sig?.module_details?.volume_profile?.low_volume_nodes,
+                            }
+                          : selectedKnowledgeId === 'breakout'
+                          ? sig?.module_details?.breakout
+                          : selectedKnowledgeId === 'candlesticks'
+                          ? sig?.module_details?.candlesticks
+                          : selectedKnowledgeId === 'fibonacci'
+                          ? sig?.module_details?.fibonacci
+                          : sig?.module_details?.filters,
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* ==================== PAGE 4: RISK CENTER & $5 GUARD ==================== */}
+        {/* ================= TAB 3: MT5 CONNECTION & SETUP WIZARD ================= */}
+        {activeTab === 'setup' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 quant-card rounded-xl p-6 space-y-5">
+              <div className="border-b border-slate-800 pb-3">
+                <h2 className="text-lg font-bold text-white">
+                  MetaTrader 5 Connection & Encrypted Vault Setup Wizard
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Credentials are encrypted using OS Keyring or AES-256-GCM (PBKDF2 600,000 iterations) and are never stored in browser localStorage, URLs, or plaintext logs.
+                </p>
+              </div>
+
+              {connMessage && (
+                <div
+                  className={`p-3.5 rounded-lg text-xs border ${
+                    connMessage.type === 'ok'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  {connMessage.text}
+                </div>
+              )}
+
+              <form onSubmit={handleConnectMT5} className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-slate-400 mb-1">Broker Name</label>
+                    <input
+                      type="text"
+                      value={connForm.broker}
+                      onChange={(e) => setConnForm({ ...connForm, broker: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 mb-1">MT5 Server Name</label>
+                    <input
+                      type="text"
+                      value={connForm.server}
+                      onChange={(e) => setConnForm({ ...connForm, server: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 mb-1">Account Login Number</label>
+                    <input
+                      type="number"
+                      value={connForm.login}
+                      onChange={(e) => setConnForm({ ...connForm, login: Number(e.target.value) })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 mb-1">
+                      Trading Password (Masked & Never Logged)
+                    </label>
+                    <input
+                      type="password"
+                      placeholder={
+                        overview?.vault_profile?.has_saved_credentials
+                          ? '•••••••• (Stored in Encrypted Vault)'
+                          : 'Enter MT5 Password'
+                      }
+                      value={connForm.password}
+                      onChange={(e) =>
+                        setConnForm({
+                          ...connForm,
+                          password: e.target.value,
+                          use_saved_password: false,
+                        })
+                      }
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-slate-400 mb-1">
+                      MT5 Terminal Path (Auto-Detected or Custom)
+                    </label>
+                    <input
+                      type="text"
+                      value={connForm.terminal_path}
+                      onChange={(e) => setConnForm({ ...connForm, terminal_path: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono text-[11px]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 mb-1">Account Mode</label>
+                    <select
+                      value={connForm.trading_mode}
+                      onChange={(e) => setConnForm({ ...connForm, trading_mode: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="DEMO">DEMO Account (Recommended Default)</option>
+                      <option value="LIVE">LIVE Real-Money Account (Requires Unlock)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-6 pt-1">
+                  <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={connForm.save_in_vault}
+                      onChange={(e) => setConnForm({ ...connForm, save_in_vault: e.target.checked })}
+                    />
+                    Save encrypted in local OS / AES-256-GCM Vault
+                  </label>
+                  <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={connForm.use_ea_bridge}
+                      onChange={(e) => setConnForm({ ...connForm, use_ea_bridge: e.target.checked })}
+                    />
+                    Connect via MQL5 Expert Advisor Bridge (TwoRealBridgeEA.mq5)
+                  </label>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-800">
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-lg font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition cursor-pointer"
+                  >
+                    Connect to MT5 Terminal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEnablePaperHarness(10000)}
+                    className="px-4 py-2 rounded-lg font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition cursor-pointer"
+                  >
+                    Load $10,000 Demo Test Harness
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEnablePaperHarness(5)}
+                    className="px-3.5 py-2 rounded-lg font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition cursor-pointer"
+                  >
+                    Load $5.00 Micro Account
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDisconnect(false)}
+                    className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer"
+                  >
+                    Disconnect
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDisconnect(true)}
+                    className="px-3 py-2 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 transition cursor-pointer"
+                  >
+                    Disconnect & Forget Credentials
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Right Column: Terminal Detection & Security Audit */}
+            <div className="lg:col-span-5 space-y-4">
+              <div className="quant-card rounded-xl p-5 space-y-3 text-xs">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  Credential Vault & Environment Diagnostics
+                </h3>
+                <div className="space-y-2 bg-slate-950 p-3.5 rounded-lg border border-slate-800 font-mono">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Vault Encryption:</span>
+                    <span className="text-emerald-400">
+                      {overview?.vault_profile?.vault_backend || 'AES256_GCM_FILE'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Saved Profile:</span>
+                    <span className="text-white">
+                      {overview?.vault_profile?.has_saved_credentials ? 'YES (Encrypted)' : 'NONE'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Host OS:</span>
+                    <span className="text-cyan-300">
+                      {conn?.terminal_detection?.os_platform || 'Linux'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Browser Storage Leak:</span>
+                    <span className="text-emerald-400">0 Secrets in localStorage</span>
+                  </div>
+                </div>
+                <p className="text-slate-400 leading-relaxed">
+                  {conn?.terminal_detection?.installation_guide}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB 4: 8-MODULE STRATEGY CENTER ================= */}
+        {activeTab === 'strategy' && strategyConfig && (
+          <div className="quant-card rounded-xl p-6 space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-white">
+                  8-Module Institutional Strategy & Multi-Timeframe Center
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Configure Scalping (1H / 5M), Day Trading (4H / 15M), Optional Swing Mode (D1 / 4H), minimum confluence threshold, and individual strategy module parameters.
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  const updated = await api.updateStrategyConfig(strategyConfig);
+                  setStrategyConfig(updated);
+                  await loadSymbolAnalysis(selectedSymbol, selectedTimeframe);
+                  setExecutionFeedback('Saved Strategy Center configuration.');
+                }}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition cursor-pointer"
+              >
+                Save & Apply Strategy Settings
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                <label className="block text-slate-400 mb-1.5">Primary Trading Style</label>
+                <select
+                  value={strategyConfig.trading_style}
+                  onChange={(e) =>
+                    setStrategyConfig({ ...strategyConfig, trading_style: e.target.value })
+                  }
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="SCALPING">Scalping (HTF: 1H → LTF: 5M)</option>
+                  <option value="DAY_TRADING">Day Trading (HTF: 4H → LTF: 15M)</option>
+                  <option value="SWING">Swing Trading (HTF: D1 → LTF: 4H)</option>
+                </select>
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                <label className="block text-slate-400 mb-1.5">
+                  Minimum Confluence Score (0 - 100)
+                </label>
+                <input
+                  type="number"
+                  min={40}
+                  max={95}
+                  value={strategyConfig.min_confluence_score}
+                  onChange={(e) =>
+                    setStrategyConfig({
+                      ...strategyConfig,
+                      min_confluence_score: Number(e.target.value),
+                    })
+                  }
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono"
+                />
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center">
+                <label className="flex items-center gap-2.5 text-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={strategyConfig.swing_mode_enabled}
+                    onChange={(e) =>
+                      setStrategyConfig({
+                        ...strategyConfig,
+                        swing_mode_enabled: e.target.checked,
+                      })
+                    }
+                  />
+                  <span>
+                    Enable Optional Swing Mode (D1 Bias / 4H Entry)
+                    <span className="block text-[11px] text-slate-500">
+                      Disabled by default per institutional specification
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* 8 Strategy Modules Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+              {[
+                {
+                  key: 'ict',
+                  title: 'Module A: ICT Concepts',
+                  desc: 'BSL/SSL Liquidity Pools, Sweeps, Dealing Range Premium/Discount, MSS & Displacement.',
+                },
+                {
+                  key: 'smc',
+                  title: 'Module B: Smart Money (SMC)',
+                  desc: 'BOS, CHoCH, Validated Order Blocks (requires BOS + displacement), Mitigation tracking.',
+                },
+                {
+                  key: 'fvg',
+                  title: 'Module C: Fair Value Gaps',
+                  desc: '3-candle bullish/bearish imbalances, 50% Consequent Encroachment (CE), fill invalidation.',
+                },
+                {
+                  key: 'volume_profile',
+                  title: 'Module D: Volume Profile & POC',
+                  desc: '40-bin price volume histogram (never candle close), POC, VAH/VAL (70% Value Area), HVN/LVN.',
+                },
+                {
+                  key: 'breakout',
+                  title: 'Module E: Breakout & Fakeout',
+                  desc: 'Consolidation range detection, ATR/volume confirmed breakouts, failed breakout traps.',
+                },
+                {
+                  key: 'candlesticks',
+                  title: 'Module F: Candlestick Action',
+                  desc: 'Engulfing, Pin Bars, Hammer/Shooting Star, Inside Bars, Morning/Evening Star in zone context.',
+                },
+                {
+                  key: 'fibonacci',
+                  title: 'Module G: Fibonacci OTE',
+                  desc: 'Confirmed swing anchor retracements (0.50, 0.618, 0.705 OTE, 0.786) as confluence.',
+                },
+              ].map((m) => (
+                <div
+                  key={m.key}
+                  className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white">{m.title}</span>
+                    <input
+                      type="checkbox"
+                      checked={strategyConfig[m.key]?.enabled ?? true}
+                      onChange={(e) =>
+                        setStrategyConfig({
+                          ...strategyConfig,
+                          [m.key]: { ...strategyConfig[m.key], enabled: e.target.checked },
+                        })
+                      }
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">{m.desc}</p>
+                </div>
+              ))}
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-white">Module H: Regime & Filters</span>
+                  <span className="text-[10px] font-mono text-emerald-400">ALWAYS ON</span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  ADX Trend/Range filter, ATR volatility gate, Live Spread gate, UTC Session window, honest News Filter state.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB 5: UN-BYPASSABLE RISK ENGINE & $5 CHECKER ================= */}
         {activeTab === 'risk' && riskConfig && (
-          <div className="space-y-5">
-            {/* Risk Parameters Panel */}
-            <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#1d2538] pb-4 mb-5">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 quant-card rounded-xl p-6 space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div>
-                  <h2 className="text-base font-bold text-white">
-                    Un-Bypassable Risk Management Center
+                  <h2 className="text-lg font-bold text-white">
+                    Un-Bypassable Risk Management Engine
                   </h2>
                   <p className="text-xs text-slate-400">
-                    Hard safety limits enforced on every trade. Strategy modules cannot bypass these controls.
+                    Hard safety limits cannot be overridden by a high confluence score.
                   </p>
                 </div>
                 <button
-                  onClick={handleSaveRiskConfig}
-                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+                  onClick={async () => {
+                    const updated = await api.updateRiskConfig(riskConfig);
+                    setRiskConfig(updated);
+                    await loadSymbolAnalysis(selectedSymbol, selectedTimeframe);
+                    setExecutionFeedback('Updated Risk Engine parameters.');
+                  }}
+                  className="px-4 py-2 rounded-lg text-xs font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 cursor-pointer"
                 >
                   Save Risk Limits
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                 {[
-                  { key: 'risk_per_trade_pct', label: 'Risk Per Trade (% of Equity)', step: '0.1' },
-                  { key: 'max_daily_loss_pct', label: 'Max Daily Loss Limit (%)', step: '0.5' },
-                  { key: 'max_overall_drawdown_pct', label: 'Max Overall Drawdown (%)', step: '0.5' },
-                  { key: 'max_open_positions', label: 'Max Simultaneous Open Positions', step: '1' },
-                  { key: 'max_consecutive_losses', label: 'Max Consecutive Losses', step: '1' },
-                  { key: 'max_total_exposure_lots', label: 'Max Total Exposure (Lots)', step: '0.5' },
-                  { key: 'max_margin_usage_pct', label: 'Max Margin Usage (% of Equity)', step: '1' },
-                  { key: 'min_risk_reward_ratio', label: 'Minimum Risk:Reward Ratio', step: '0.1' },
-                ].map((item) => (
-                  <div key={item.key} className="p-3.5 rounded-xl bg-[#0b0e17] border border-[#1c2336]">
-                    <label className="block text-xs text-slate-400 mb-1.5">{item.label}</label>
+                  { key: 'risk_per_trade_pct', label: 'Risk Per Trade (%) — Conservative Default 0.5%' },
+                  { key: 'max_daily_loss_pct', label: 'Max Daily Loss Limit (%)' },
+                  { key: 'max_overall_drawdown_pct', label: 'Max Total Drawdown Limit (%)' },
+                  { key: 'max_open_positions', label: 'Max Simultaneous Open Positions' },
+                  { key: 'max_consecutive_losses', label: 'Max Consecutive Losses Before Cooldown' },
+                  { key: 'min_risk_reward_ratio', label: 'Minimum Reward:Risk Ratio (R)' },
+                  { key: 'max_margin_usage_pct', label: 'Max Margin Usage Cap (%)' },
+                  { key: 'default_commission_per_lot_usd', label: 'Round-Turn Commission ($ / Lot)' },
+                ].map((field) => (
+                  <div key={field.key}>
+                    <label className="block text-slate-400 mb-1">{field.label}</label>
                     <input
                       type="number"
-                      step={item.step}
-                      value={riskConfig[item.key] ?? ''}
+                      step="0.1"
+                      value={riskConfig[field.key]}
                       onChange={(e) =>
-                        setRiskConfig({ ...riskConfig, [item.key]: Number(e.target.value) })
+                        setRiskConfig({ ...riskConfig, [field.key]: Number(e.target.value) })
                       }
-                      className="w-full px-3 py-2 text-xs rounded-lg bg-[#121726] border border-[#252e47] text-white font-mono-num"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono"
                     />
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              {/* Small Account Compatibility ($5 Balance Validator — Section 10) */}
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-5 space-y-4">
-                <div className="flex items-center justify-between border-b border-[#1d2538] pb-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-white">
-                      Small Account Compatibility & $5.00 Risk Validator
-                    </h3>
-                    <p className="text-[11px] text-slate-400">
-                      Evaluates minimum broker volume (0.01 lot), contract specs, commission, and stop distance.
-                    </p>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                    Section 10 Compliance
-                  </span>
-                </div>
+            {/* Small Account ($5) Safety Guard Simulator */}
+            <div className="lg:col-span-5 quant-card rounded-xl p-6 space-y-4">
+              <div className="border-b border-slate-800 pb-3">
+                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                  Mandatory Small-Account Protection
+                </span>
+                <h3 className="text-base font-bold text-white mt-1">
+                  $5.00 Micro-Account Feasibility Verifier
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Tests whether a small account can safely trade a broker's minimum lot (0.01) given stop-loss distance, tick value, and commission.
+                </p>
+              </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <form onSubmit={handleSmallAccountCheck} className="space-y-3 text-xs">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Account Balance ($)</label>
+                    <label className="block text-slate-400 mb-1">Account Balance ($)</label>
                     <input
                       type="number"
-                      step="1"
-                      value={smallAcctBalance}
-                      onChange={(e) => setSmallAcctBalance(Number(e.target.value))}
-                      className="w-full px-2.5 py-1.5 rounded bg-[#0b0e17] border border-[#252e47] text-white font-mono-num"
+                      step="0.5"
+                      value={smallAcctForm.balance_usd}
+                      onChange={(e) =>
+                        setSmallAcctForm({ ...smallAcctForm, balance_usd: Number(e.target.value) })
+                      }
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-white font-mono"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Symbol</label>
+                    <label className="block text-slate-400 mb-1">Symbol</label>
                     <select
-                      value={smallAcctSymbol}
-                      onChange={(e) => setSmallAcctSymbol(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded bg-[#0b0e17] border border-[#252e47] text-white"
+                      value={smallAcctForm.symbol}
+                      onChange={(e) =>
+                        setSmallAcctForm({ ...smallAcctForm, symbol: e.target.value })
+                      }
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-white"
                     >
-                      <option value="EURUSD">EURUSD</option>
-                      <option value="XAUUSD">XAUUSD</option>
-                      <option value="GBPUSD">GBPUSD</option>
-                      <option value="USDJPY">USDJPY</option>
+                      {ALL_SYMBOLS.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Risk %</label>
+                    <label className="block text-slate-400 mb-1">Risk Per Trade (%)</label>
                     <input
                       type="number"
                       step="0.1"
-                      value={smallAcctRiskPct}
-                      onChange={(e) => setSmallAcctRiskPct(Number(e.target.value))}
-                      className="w-full px-2.5 py-1.5 rounded bg-[#0b0e17] border border-[#252e47] text-white font-mono-num"
+                      value={smallAcctForm.risk_per_trade_pct}
+                      onChange={(e) =>
+                        setSmallAcctForm({
+                          ...smallAcctForm,
+                          risk_per_trade_pct: Number(e.target.value),
+                        })
+                      }
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-white font-mono"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">SL Distance (Pips)</label>
+                    <label className="block text-slate-400 mb-1">Stop Loss (Pips)</label>
                     <input
                       type="number"
                       step="1"
-                      value={smallAcctSlPips}
-                      onChange={(e) => setSmallAcctSlPips(Number(e.target.value))}
-                      className="w-full px-2.5 py-1.5 rounded bg-[#0b0e17] border border-[#252e47] text-white font-mono-num"
+                      value={smallAcctForm.stop_loss_pips}
+                      onChange={(e) =>
+                        setSmallAcctForm({
+                          ...smallAcctForm,
+                          stop_loss_pips: Number(e.target.value),
+                        })
+                      }
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-white font-mono"
                     />
                   </div>
                 </div>
-
                 <button
-                  onClick={handleEvaluateSmallAccount}
-                  className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold"
+                  type="submit"
+                  className="w-full py-2 rounded-lg font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition cursor-pointer"
                 >
-                  Evaluate Account Feasibility
+                  Evaluate Micro-Account Risk Safety
                 </button>
+              </form>
 
-                {smallAcctResult && (
-                  <div
-                    className={`p-3.5 rounded-xl border text-xs space-y-2 ${
-                      smallAcctResult.approved
-                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
-                        : 'bg-rose-500/10 border-rose-500/30 text-rose-200'
-                    }`}
-                  >
-                    <div className="flex justify-between font-mono-num">
-                      <span>Permitted Risk Budget: <strong>${smallAcctResult.risk_budget_usd}</strong></span>
-                      <span>Min Lot (0.01) Risk: <strong>${smallAcctResult.min_lot_risk_usd}</strong></span>
-                      <span>Approved Lot Size: <strong>{smallAcctResult.lot_size} lots</strong></span>
-                    </div>
-                    {smallAcctResult.rejections?.map((r: string, idx: number) => (
-                      <div key={idx} className="font-semibold flex items-start gap-1.5">
-                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                        <span>{r}</span>
-                      </div>
-                    ))}
+              {smallAcctResult && (
+                <div
+                  className={`p-4 rounded-xl border text-xs space-y-2 font-mono ${
+                    smallAcctResult.approved
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
+                      : 'bg-rose-500/15 border-rose-500/40 text-rose-200'
+                  }`}
+                >
+                  <div className="font-bold text-sm">
+                    {smallAcctResult.approved ? '✓ TRADE APPROVED' : '✕ TRADE BLOCKED BY RISK GUARD'}
                   </div>
-                )}
-              </div>
-
-              {/* Explicit Live Execution Authorization Gate (Section 13 & Stage 6) */}
-              <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-5 space-y-4">
-                <div className="flex items-center justify-between border-b border-[#1d2538] pb-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-white">
-                      Explicit Live Automated Trading Authorization Gate
-                    </h3>
-                    <p className="text-[11px] text-slate-400">
-                      Live trading is disabled by default. Never switches from Demo to Live automatically.
-                    </p>
+                  <div className="text-white bg-slate-950/90 p-2.5 rounded border border-slate-800">
+                    {smallAcctResult.rejection_reason ||
+                      `Approved Lot Size: ${smallAcctResult.calculated_lot_size} lots`}
                   </div>
-                  <span
-                    className={`text-[10px] px-2.5 py-1 rounded font-bold ${
-                      overview?.live_trading_authorized
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                        : 'bg-slate-800 text-slate-300'
-                    }`}
-                  >
-                    {overview?.live_trading_authorized ? 'LIVE AUTHORIZED' : 'LIVE LOCKED (SAFE)'}
-                  </span>
-                </div>
-
-                <div className="space-y-2.5 text-xs">
-                  <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={ackDemoTested}
-                      onChange={(e) => setAckDemoTested(e.target.checked)}
-                    />
-                    I have validated strategy & risk behavior on a Demo account / Backtest first.
-                  </label>
-                  <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={ackRisk}
-                      onChange={(e) => setAckRisk(e.target.checked)}
-                    />
-                    I understand leveraged FX/CFD trading carries real risk of loss and no profit is guaranteed.
-                  </label>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">
-                      Type <code className="text-amber-300">ENABLE LIVE TRADING</code> to unlock:
-                    </label>
-                    <input
-                      type="text"
-                      value={livePhrase}
-                      onChange={(e) => setLivePhrase(e.target.value)}
-                      placeholder="ENABLE LIVE TRADING"
-                      className="w-full px-3 py-2 rounded-lg bg-[#0b0e17] border border-[#252e47] text-white font-mono-num"
-                    />
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      onClick={handleAuthorizeLive}
-                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
-                    >
-                      Authorize Live Execution
-                    </button>
-                    {overview?.live_trading_authorized && (
-                      <button
-                        onClick={async () => {
-                          await api.revokeLive();
-                          await loadAllData();
-                        }}
-                        className="px-4 py-2 rounded-lg bg-rose-600/25 border border-rose-500/40 text-rose-200 font-semibold"
-                      >
-                        Revoke Live Authorization
-                      </button>
-                    )}
+                  <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300 pt-1">
+                    <div>Max Allowed Risk: ${smallAcctResult.allowed_risk_usd}</div>
+                    <div>Min Lot (0.01) Risk: ${smallAcctResult.min_lot_risk_usd}</div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* ==================== PAGE 5: BACKTESTING ==================== */}
+        {/* ================= TAB 6: BACKTESTER ================= */}
         {activeTab === 'backtest' && (
           <div className="space-y-5">
-            {/* Backtest Controls */}
-            <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#1d2538] pb-4 mb-4">
-                <div>
-                  <h2 className="text-base font-bold text-white">
-                    Zero Look-Ahead Historical Backtesting & Walk-Forward Validation
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Models spread, round-trip commission, overnight swap, slippage, and broker minimum volume rules.
-                  </p>
-                </div>
-                <button
-                  onClick={handleRunBacktest}
-                  disabled={btRunning}
-                  className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-blue-600/20"
-                >
-                  {btRunning ? 'Running Bar-by-Bar Simulation...' : 'Run Backtest'}
-                </button>
-              </div>
+            <div className="quant-card rounded-xl p-5">
+              <h2 className="text-lg font-bold text-white mb-1">
+                Bar-by-Bar Zero-Lookahead Backtesting & Walk-Forward Engine
+              </h2>
+              <p className="text-xs text-slate-400 mb-4">
+                Simulates candle-by-candle through the 8-module confluence engine and risk engine with realistic spread, commission, slippage, and 70/30 In-Sample / Out-of-Sample validation.
+              </p>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+              <form
+                onSubmit={handleRunBacktest}
+                className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-xs items-end"
+              >
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Symbol</label>
+                  <label className="block text-slate-400 mb-1">Symbol</label>
                   <select
-                    value={btSymbol}
-                    onChange={(e) => setBtSymbol(e.target.value)}
-                    className="w-full px-2.5 py-2 rounded-lg bg-[#0b0e17] border border-[#252e47] text-white"
+                    value={btForm.symbol}
+                    onChange={(e) => setBtForm({ ...btForm, symbol: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
                   >
-                    <option value="EURUSD">EURUSD</option>
-                    <option value="XAUUSD">XAUUSD</option>
-                    <option value="GBPUSD">GBPUSD</option>
-                    <option value="USDJPY">USDJPY</option>
+                    {ALL_SYMBOLS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Timeframe</label>
+                  <label className="block text-slate-400 mb-1">Timeframe</label>
                   <select
-                    value={btTimeframe}
-                    onChange={(e) => setBtTimeframe(e.target.value)}
-                    className="w-full px-2.5 py-2 rounded-lg bg-[#0b0e17] border border-[#252e47] text-white"
+                    value={btForm.timeframe}
+                    onChange={(e) => setBtForm({ ...btForm, timeframe: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
                   >
-                    <option value="M5">M5 (Scalping)</option>
-                    <option value="M15">M15 (Day Trading)</option>
-                    <option value="H1">H1 (Intraday)</option>
-                    <option value="H4">H4 (Swing)</option>
+                    <option value="M5">M5</option>
+                    <option value="M15">M15</option>
+                    <option value="H1">H1</option>
+                    <option value="H4">H4</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Strategy Mode</label>
-                  <select
-                    value={btStrategyMode}
-                    onChange={(e) => setBtStrategyMode(e.target.value)}
-                    className="w-full px-2.5 py-2 rounded-lg bg-[#0b0e17] border border-[#252e47] text-white"
-                  >
-                    <option value="ALL_CONFLUENCE">All 8 Modules Confluence</option>
-                    <option value="ICT_SMC_CORE">ICT + SMC + FVG Focus</option>
-                    <option value="VOLUME_BREAKOUT">POC + Breakout Focus</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Historical Bars</label>
+                  <label className="block text-slate-400 mb-1">Historical Bars</label>
                   <input
                     type="number"
-                    min="80"
-                    max="1000"
-                    value={btBars}
-                    onChange={(e) => setBtBars(Number(e.target.value))}
-                    className="w-full px-2.5 py-2 rounded-lg bg-[#0b0e17] border border-[#252e47] text-white font-mono-num"
+                    min={80}
+                    max={600}
+                    value={btForm.bars}
+                    onChange={(e) => setBtForm({ ...btForm, bars: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Initial Balance ($)</label>
+                  <label className="block text-slate-400 mb-1">Initial Balance ($)</label>
                   <input
                     type="number"
-                    value={btInitialBalance}
-                    onChange={(e) => setBtInitialBalance(Number(e.target.value))}
-                    className="w-full px-2.5 py-2 rounded-lg bg-[#0b0e17] border border-[#252e47] text-white font-mono-num"
+                    value={btForm.initial_balance}
+                    onChange={(e) =>
+                      setBtForm({ ...btForm, initial_balance: Number(e.target.value) })
+                    }
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Spread (Pips)</label>
+                  <label className="block text-slate-400 mb-1">Spread (Pips)</label>
                   <input
                     type="number"
                     step="0.1"
-                    value={btSpreadPips}
-                    onChange={(e) => setBtSpreadPips(Number(e.target.value))}
-                    className="w-full px-2.5 py-2 rounded-lg bg-[#0b0e17] border border-[#252e47] text-white font-mono-num"
+                    value={btForm.spread_pips}
+                    onChange={(e) => setBtForm({ ...btForm, spread_pips: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Commission ($/Lot)</label>
+                  <label className="block text-slate-400 mb-1">Commission ($/Lot)</label>
                   <input
                     type="number"
                     step="0.5"
-                    value={btCommission}
-                    onChange={(e) => setBtCommission(Number(e.target.value))}
-                    className="w-full px-2.5 py-2 rounded-lg bg-[#0b0e17] border border-[#252e47] text-white font-mono-num"
+                    value={btForm.commission_per_lot_usd}
+                    onChange={(e) =>
+                      setBtForm({ ...btForm, commission_per_lot_usd: Number(e.target.value) })
+                    }
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono"
                   />
                 </div>
-              </div>
+                <button
+                  type="submit"
+                  disabled={btLoading}
+                  className="py-2 px-4 rounded-lg font-bold bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition cursor-pointer"
+                >
+                  {btLoading ? 'Simulating...' : 'Run Backtest'}
+                </button>
+              </form>
             </div>
 
-            {backtestReport && (
-              <>
-                {/* Warnings & Sample-Size Honesty Notice */}
-                {backtestReport.warnings?.length > 0 && (
-                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-1">
-                    {backtestReport.warnings.map((w: string, i: number) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
-                        <span>{w}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Backtest Metrics Strip */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-                  <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-3.5">
-                    <span className="text-[10px] text-slate-400 block">Net Result (After Costs)</span>
+            {btResult && (
+              <div className="space-y-4">
+                <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-xs text-slate-300 flex flex-wrap items-center justify-between gap-2">
+                  <span>{btResult.execution_disclaimer}</span>
+                  {btResult.warnings?.map((w: string, i: number) => (
                     <span
-                      className={`text-sm font-bold font-mono-num ${
-                        backtestReport.net_profit >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                      }`}
+                      key={i}
+                      className="px-2.5 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono"
                     >
-                      {backtestReport.net_profit >= 0 ? '+' : ''}${backtestReport.net_profit} (
-                      {backtestReport.net_return_pct}%)
+                      {w}
                     </span>
-                  </div>
-                  <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-3.5">
-                    <span className="text-[10px] text-slate-400 block">Max Drawdown</span>
-                    <span className="text-sm font-bold font-mono-num text-amber-300">
-                      {backtestReport.max_drawdown_pct}% (${backtestReport.max_drawdown_usd})
-                    </span>
-                  </div>
-                  <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-3.5">
-                    <span className="text-[10px] text-slate-400 block">Win Rate</span>
-                    <span className="text-sm font-bold font-mono-num text-white">
-                      {backtestReport.win_rate_pct}%
-                    </span>
-                  </div>
-                  <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-3.5">
-                    <span className="text-[10px] text-slate-400 block">Profit Factor</span>
-                    <span className="text-sm font-bold font-mono-num text-blue-300">
-                      {backtestReport.profit_factor}
-                    </span>
-                  </div>
-                  <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-3.5">
-                    <span className="text-[10px] text-slate-400 block">Total Trades</span>
-                    <span className="text-sm font-bold font-mono-num text-white">
-                      {backtestReport.total_trades} ({backtestReport.winning_trades}W / {backtestReport.losing_trades}L)
-                    </span>
-                  </div>
-                  <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-3.5">
-                    <span className="text-[10px] text-slate-400 block">Average Win / Loss</span>
-                    <span className="text-xs font-bold font-mono-num text-slate-200">
-                      +${backtestReport.average_win_usd} / ${backtestReport.average_loss_usd}
-                    </span>
-                  </div>
-                  <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-3.5">
-                    <span className="text-[10px] text-slate-400 block">In-Sample (70%)</span>
-                    <span className="text-xs font-bold font-mono-num text-blue-300">
-                      {backtestReport.in_sample?.trades} tr · ${backtestReport.in_sample?.net_profit}
-                    </span>
-                  </div>
-                  <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-3.5">
-                    <span className="text-[10px] text-slate-400 block">Out-of-Sample (30%)</span>
-                    <span className="text-xs font-bold font-mono-num text-purple-300">
-                      {backtestReport.out_of_sample?.trades} tr · ${backtestReport.out_of_sample?.net_profit}
-                    </span>
-                  </div>
+                  ))}
                 </div>
 
-                {/* Equity Curve Chart */}
-                <EquityCurveChart
-                  curve={backtestReport.equity_curve || []}
-                  initialBalance={backtestReport.initial_balance || 10000}
-                />
-
-                {/* Modeled Backtest Trades List */}
-                <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-bold text-white">
-                      Modeled Backtest Execution Log ({backtestReport.trades?.length || 0} Trades)
-                    </h3>
-                    <span className="text-[11px] text-slate-400">
-                      {backtestReport.execution_disclaimer}
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto max-h-72">
-                    <table className="w-full text-xs text-left">
-                      <thead className="text-slate-400 border-b border-[#1d2538]">
-                        <tr>
-                          <th className="py-2 px-2">#</th>
-                          <th className="py-2 px-2">Segment</th>
-                          <th className="py-2 px-2">Direction</th>
-                          <th className="py-2 px-2">Lots</th>
-                          <th className="py-2 px-2">Entry</th>
-                          <th className="py-2 px-2">Exit</th>
-                          <th className="py-2 px-2">Exit Reason</th>
-                          <th className="py-2 px-2">Commission</th>
-                          <th className="py-2 px-2">Net P&L</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#181f30] font-mono-num">
-                        {backtestReport.trades?.map((t: any) => (
-                          <tr key={t.ticket}>
-                            <td className="py-2 px-2 text-slate-400">#{t.ticket}</td>
-                            <td className="py-2 px-2">
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] ${
-                                  t.sample_segment === 'OUT_OF_SAMPLE'
-                                    ? 'bg-purple-500/20 text-purple-300'
-                                    : 'bg-blue-500/15 text-blue-300'
-                                }`}
-                              >
-                                {t.sample_segment}
-                              </span>
-                            </td>
-                            <td className="py-2 px-2 font-bold">{t.direction}</td>
-                            <td className="py-2 px-2">{t.volume}</td>
-                            <td className="py-2 px-2">{t.entry_price}</td>
-                            <td className="py-2 px-2">{t.exit_price}</td>
-                            <td className="py-2 px-2 text-slate-300">{t.exit_reason}</td>
-                            <td className="py-2 px-2 text-slate-400">-${t.commission}</td>
-                            <td
-                              className={`py-2 px-2 font-bold ${
-                                t.realized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                              }`}
-                            >
-                              {t.realized_pnl >= 0 ? '+' : ''}${t.realized_pnl}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-xs font-mono">
+                  {[
+                    {
+                      label: 'Net Profit',
+                      val: `${btResult.net_profit >= 0 ? '+' : ''}$${btResult.net_profit}`,
+                      color: btResult.net_profit >= 0 ? 'text-emerald-400' : 'text-rose-400',
+                    },
+                    { label: 'Return (%)', val: `${btResult.net_return_pct}%` },
+                    { label: 'Total Trades', val: btResult.total_trades },
+                    { label: 'Win Rate', val: `${btResult.win_rate_pct}%` },
+                    { label: 'Profit Factor', val: btResult.profit_factor },
+                    { label: 'Max Drawdown', val: `${btResult.max_drawdown_pct}%` },
+                    {
+                      label: 'In-Sample P&L',
+                      val: `$${btResult.in_sample?.net_profit ?? 0} (${btResult.in_sample?.trades ?? 0}t)`,
+                    },
+                    {
+                      label: 'Out-of-Sample P&L',
+                      val: `$${btResult.out_of_sample?.net_profit ?? 0} (${btResult.out_of_sample?.trades ?? 0}t)`,
+                    },
+                  ].map((s, idx) => (
+                    <div key={idx} className="quant-card rounded-xl p-3">
+                      <div className="text-[10px] text-slate-400">{s.label}</div>
+                      <div className={`text-sm font-bold mt-1 ${s.color || 'text-white'}`}>
+                        {s.val}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </>
+
+                <EquityChart data={btResult.equity_curve || []} />
+              </div>
             )}
           </div>
         )}
 
-        {/* ==================== PAGE 6: TRADE HISTORY ==================== */}
-        {activeTab === 'history' && (
-          <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-[#1d2538] pb-3">
-              <div>
-                <h2 className="text-base font-bold text-white">
-                  Executed Trade History & Reconciliation Ledger
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Records only actual executed MT5 / Paper Harness orders — never fabricated trades.
-                </p>
-              </div>
+        {/* ================= TAB 7: POSITIONS & TRADE HISTORY LEDGER ================= */}
+        {activeTab === 'trades' && (
+          <div className="quant-card rounded-xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">
+                Complete Execution & Trade History Ledger
+              </h2>
               <button
-                onClick={loadAllData}
-                className="px-3 py-1.5 rounded-lg bg-[#171e30] text-slate-200 text-xs flex items-center gap-1.5"
+                onClick={async () => {
+                  const tr = await api.getTradeHistory();
+                  setTradesHistory(tr.trades || []);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer"
               >
-                <RefreshCw className="w-3.5 h-3.5" /> Refresh Ledger
+                Refresh Ledger
               </button>
             </div>
 
-            {tradeHistory.length === 0 ? (
-              <div className="py-12 text-center text-xs text-slate-400">
-                No executed trades in ledger yet. Connect to MT5 or activate the Offline Demo Test Harness and execute a signal to record trades.
+            {tradesHistory.length === 0 ? (
+              <div className="text-xs text-slate-500 py-8 text-center">
+                No historical trades recorded yet.
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
-                  <thead className="text-slate-400 border-b border-[#1d2538]">
+                <table className="w-full text-xs text-left font-mono">
+                  <thead className="text-slate-400 border-b border-slate-800">
                     <tr>
-                      <th className="py-2.5 px-3">Ticket</th>
-                      <th className="py-2.5 px-3">Symbol</th>
-                      <th className="py-2.5 px-3">Direction</th>
-                      <th className="py-2.5 px-3">Volume</th>
-                      <th className="py-2.5 px-3">Entry Price</th>
-                      <th className="py-2.5 px-3">Exit Price</th>
-                      <th className="py-2.5 px-3">Entry Time</th>
-                      <th className="py-2.5 px-3">Exit Time</th>
-                      <th className="py-2.5 px-3">Commission / Swap</th>
-                      <th className="py-2.5 px-3">Realized P&L</th>
-                      <th className="py-2.5 px-3">Strategy / Source</th>
-                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2">Ticket</th>
+                      <th className="py-2">Symbol</th>
+                      <th className="py-2">Side</th>
+                      <th className="py-2">Lots</th>
+                      <th className="py-2">Entry</th>
+                      <th className="py-2">Exit</th>
+                      <th className="py-2">Status</th>
+                      <th className="py-2">Realized P&L</th>
+                      <th className="py-2">Source</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#181f30] font-mono-num">
-                    {tradeHistory.map((t: any) => (
-                      <tr key={t.ticket}>
-                        <td className="py-2.5 px-3 text-slate-300">#{t.ticket}</td>
-                        <td className="py-2.5 px-3 font-bold text-white">{t.symbol}</td>
-                        <td className="py-2.5 px-3">{t.direction}</td>
-                        <td className="py-2.5 px-3">{t.volume}</td>
-                        <td className="py-2.5 px-3">{t.entry_price}</td>
-                        <td className="py-2.5 px-3">{t.exit_price ?? '—'}</td>
-                        <td className="py-2.5 px-3 text-[11px] text-slate-400">
-                          {t.entry_time?.slice(0, 19).replace('T', ' ')}
-                        </td>
-                        <td className="py-2.5 px-3 text-[11px] text-slate-400">
-                          {t.exit_time ? t.exit_time.slice(0, 19).replace('T', ' ') : '—'}
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-400">
-                          ${Number(t.commission || 0).toFixed(2)} / ${Number(t.swap || 0).toFixed(2)}
-                        </td>
-                        <td
-                          className={`py-2.5 px-3 font-bold ${
-                            Number(t.realized_pnl) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                          }`}
-                        >
-                          {Number(t.realized_pnl) >= 0 ? '+' : ''}${Number(t.realized_pnl || 0).toFixed(2)}
-                        </td>
-                        <td className="py-2.5 px-3 text-[11px]">
-                          {t.strategy_tag} ({t.execution_source})
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 text-[10px]">
+                  <tbody className="divide-y divide-slate-800/60">
+                    {tradesHistory.map((t: any, i: number) => (
+                      <tr key={i} className="hover:bg-slate-800/30">
+                        <td className="py-2.5">#{t.ticket}</td>
+                        <td className="py-2.5 font-bold text-white">{t.symbol}</td>
+                        <td className="py-2.5">{t.direction}</td>
+                        <td className="py-2.5">{t.volume}</td>
+                        <td className="py-2.5">{t.entry_price}</td>
+                        <td className="py-2.5">{t.exit_price || '—'}</td>
+                        <td className="py-2.5">
+                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]">
                             {t.status}
                           </span>
                         </td>
+                        <td
+                          className={`py-2.5 font-bold ${
+                            (t.realized_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}
+                        >
+                          {t.status === 'CLOSED'
+                            ? `${(t.realized_pnl || 0) >= 0 ? '+' : ''}$${Number(
+                                t.realized_pnl || 0,
+                              ).toFixed(2)}`
+                            : 'OPEN'}
+                        </td>
+                        <td className="py-2.5 text-slate-400">{t.execution_source}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1761,122 +1908,98 @@ export function App() {
           </div>
         )}
 
-        {/* ==================== PAGE 7: LOGS & DIAGNOSTICS ==================== */}
+        {/* ================= TAB 8: LOGS, DIAGNOSTICS & ERROR HARNESS ================= */}
         {activeTab === 'diagnostics' && (
-          <div className="space-y-5">
-            {/* Mandatory Error-Handling Scenario Tester (Section 15) */}
-            <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1d2538] pb-3">
-                <div>
-                  <h2 className="text-base font-bold text-white">
-                    Mandatory Safety & Error-Handling Verification Suite (Section 15)
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Trigger any fault condition below to verify that 2REAL AI TRADER fails safely without retrying or duplicating orders.
-                  </p>
-                </div>
-                <span className="text-xs px-2.5 py-1 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                  SQLite DB Healthy: {overview?.db_healthy ? 'YES (WAL Mode)' : 'ERROR'}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div className="lg:col-span-4 quant-card rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-bold text-white">
+                Mandatory Error-Handling Verification Harness
+              </h3>
+              <p className="text-xs text-slate-400">
+                Trigger any of the mandatory edge cases to verify that the engine logs and rejects unsafe states cleanly without crashing.
+              </p>
+              <div className="grid grid-cols-1 gap-2 text-xs">
                 {[
-                  { id: 'SMALL_ACCOUNT_5_USD', label: 'Test $5 Small Account Rejection' },
-                  { id: 'STALE_PRICES', label: 'Test Stale Price Feed Suspension' },
-                  { id: 'DUPLICATE_ORDER', label: 'Test Duplicate Order Prevention' },
-                  { id: 'MARKET_CLOSED', label: 'Test Market Closed (10018)' },
-                  { id: 'SYMBOL_UNAVAILABLE', label: 'Test Symbol Unavailable' },
-                  { id: 'INVALID_VOLUME', label: 'Test Invalid Volume (10014)' },
-                  { id: 'INVALID_STOPS', label: 'Test Invalid Stop Loss (10016)' },
-                  { id: 'INSUFFICIENT_MARGIN', label: 'Test Insufficient Margin (10019)' },
-                  { id: 'ORDER_REJECTED', label: 'Test Broker Rejection (10006)' },
-                  { id: 'ORDER_TIMEOUT', label: 'Test Order Timeout Safe Handling' },
+                  { id: 'SMALL_ACCOUNT_5_USD', label: 'Test $5 Account Minimum Volume Rejection' },
+                  { id: 'STALE_PRICES', label: 'Test Stale Market Data Feed Suspension' },
+                  { id: 'DUPLICATE_ORDER', label: 'Test Duplicate Order Idempotency Guard' },
+                  { id: 'MARKET_CLOSED', label: 'Test Broker Market Closed (Retcode 10018)' },
+                  { id: 'SYMBOL_UNAVAILABLE', label: 'Test Symbol Unavailable / Missing Spec' },
+                  { id: 'INVALID_VOLUME', label: 'Test Invalid Lot Volume (Retcode 10014)' },
+                  { id: 'INVALID_STOPS', label: 'Test Invalid Stop Distance (Retcode 10016)' },
+                  { id: 'INSUFFICIENT_MARGIN', label: 'Test Insufficient Free Margin (Retcode 10019)' },
+                  { id: 'ORDER_REJECTED', label: 'Test Broker Dealer Rejection (Retcode 10006)' },
+                  { id: 'ORDER_TIMEOUT', label: 'Test Network / Order Dispatch Timeout' },
                 ].map((sc) => (
                   <button
                     key={sc.id}
-                    onClick={() => handleRunErrorScenario(sc.id)}
-                    className="px-3 py-1.5 rounded-lg bg-[#161c2e] hover:bg-blue-600/25 border border-[#273252] hover:border-blue-500/50 text-xs text-slate-200 transition"
+                    onClick={async () => {
+                      const res = await api.testErrorScenario(sc.id);
+                      const lg = await api.getDiagnosticLogs(logFilter);
+                      setLogs(lg.logs || []);
+                      setExecutionFeedback(
+                        `Verified Scenario [${sc.id}]: ${JSON.stringify(res.result)}`,
+                      );
+                    }}
+                    className="text-left px-3 py-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 transition cursor-pointer font-mono text-[11px]"
                   >
-                    {sc.label}
+                    ▶ {sc.label}
                   </button>
                 ))}
               </div>
-
-              {scenarioResult && (
-                <div className="p-3.5 rounded-xl bg-[#0b0e17] border border-blue-500/30 text-xs font-mono-num text-blue-200 overflow-x-auto">
-                  <div className="font-bold text-emerald-400 mb-1">
-                    ✓ Scenario Verified Safely: {scenarioResult.scenario}
-                  </div>
-                  <pre className="text-[11px] whitespace-pre-wrap">
-                    {JSON.stringify(scenarioResult, null, 2)}
-                  </pre>
-                </div>
-              )}
             </div>
 
-            {/* Diagnostic Event Stream */}
-            <div className="bg-[#10141f] border border-[#1e263b] rounded-xl p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="lg:col-span-8 quant-card rounded-xl p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-bold text-white">
-                  System Diagnostic & Audit Logs ({diagnosticLogs.length})
+                  Structured System & Risk Diagnostic Logs
                 </h3>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    'ALL',
-                    'MT5_CONNECTION',
-                    'RISK_REJECTION',
-                    'INVALID_VOLUME',
-                    'BROKER_REJECTION',
-                    'STRATEGY_DECISION',
-                    'DATA_FRESHNESS',
-                    'SYSTEM_STATUS',
-                  ].map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setLogCategoryFilter(cat)}
-                      className={`px-2.5 py-1 rounded text-[11px] font-medium ${
-                        logCategoryFilter === cat
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-[#161c2e] text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2">
+                  {['ALL', 'MT5_CONNECTION', 'STRATEGY_DECISION', 'RISK_REJECTION', 'SYSTEM_STATUS'].map(
+                    (cat) => (
+                      <button
+                        key={cat}
+                        onClick={async () => {
+                          setLogFilter(cat);
+                          const lg = await api.getDiagnosticLogs(cat);
+                          setLogs(lg.logs || []);
+                        }}
+                        className={`px-2.5 py-1 rounded text-[11px] font-mono cursor-pointer ${
+                          logFilter === cat
+                            ? 'bg-cyan-500 text-slate-950 font-bold'
+                            : 'bg-slate-950 text-slate-400'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
 
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {diagnosticLogs.map((log: any) => (
+              <div className="space-y-2 max-h-[540px] overflow-y-auto font-mono text-xs pr-1">
+                {logs.map((l: any) => (
                   <div
-                    key={log.id}
-                    className="p-3 rounded-lg bg-[#0b0e17] border border-[#1a2236] text-xs flex items-start justify-between gap-4"
+                    key={l.id}
+                    className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 flex items-start justify-between gap-3"
                   >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            log.level === 'ERROR'
-                              ? 'bg-rose-500/20 text-rose-300'
-                              : log.level === 'WARNING'
-                              ? 'bg-amber-500/20 text-amber-300'
-                              : 'bg-blue-500/20 text-blue-300'
-                          }`}
-                        >
-                          {log.level}
-                        </span>
-                        <span className="text-[11px] font-semibold text-purple-300">
-                          [{log.category}]
-                        </span>
-                        {log.symbol && (
-                          <span className="text-[11px] font-bold text-white">{log.symbol}</span>
-                        )}
-                      </div>
-                      <div className="text-slate-200">{log.message}</div>
+                    <div>
+                      <span
+                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] mr-2 ${
+                          l.level === 'ERROR'
+                            ? 'bg-rose-500/20 text-rose-300'
+                            : l.level === 'WARNING'
+                            ? 'bg-amber-500/20 text-amber-300'
+                            : 'bg-cyan-500/20 text-cyan-300'
+                        }`}
+                      >
+                        {l.level}
+                      </span>
+                      <span className="text-slate-400 text-[11px] mr-2">[{l.category}]</span>
+                      <span className="text-slate-200">{l.message}</span>
                     </div>
-                    <span className="text-[10px] font-mono-num text-slate-400 shrink-0">
-                      {log.timestamp?.slice(0, 19).replace('T', ' ')} UTC
+                    <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                      {l.timestamp?.slice(11, 19)}
                     </span>
                   </div>
                 ))}
@@ -1886,17 +2009,90 @@ export function App() {
         )}
       </main>
 
-      {/* Connection Setup Wizard Modal */}
-      <SetupWizardModal
-        isOpen={isWizardOpen}
-        onClose={() => setIsWizardOpen(false)}
-        overview={overview}
-        strategyConfig={strategyConfig}
-        riskConfig={riskConfig}
-        onRefresh={loadAllData}
-      />
+      {/* Live Trading Explicit Unlock Modal */}
+      {showLiveModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
+          <div className="quant-card rounded-2xl max-w-md w-full p-6 space-y-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-rose-400" />
+              Live Real-Money Trading Safety Lock
+            </h3>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Live trading is disabled by default. To authorize real-money execution, confirm both safety checks and type{' '}
+              <code className="text-rose-300 font-bold">ENABLE LIVE TRADING</code> below.
+            </p>
+            <div className="space-y-2 text-xs">
+              <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={liveAckDemo}
+                  onChange={(e) => setLiveAckDemo(e.target.checked)}
+                />
+                I have tested this strategy on a Demo account first.
+              </label>
+              <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={liveAckRisk}
+                  onChange={(e) => setLiveAckRisk(e.target.checked)}
+                />
+                I understand leveraged trading carries risk of capital loss.
+              </label>
+              <input
+                type="text"
+                placeholder="Type ENABLE LIVE TRADING"
+                value={livePhrase}
+                onChange={(e) => setLivePhrase(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono mt-2"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              {overview?.live_trading_authorized && (
+                <button
+                  onClick={async () => {
+                    await api.revokeLive();
+                    const ov = await api.getOverview();
+                    setOverview(ov);
+                    setShowLiveModal(false);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs bg-emerald-600 text-white cursor-pointer"
+                >
+                  Re-Lock Live Trading
+                </button>
+              )}
+              <button
+                onClick={() => setShowLiveModal(false)}
+                className="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-300 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await api.authorizeLive({
+                      confirmation_phrase: livePhrase,
+                      acknowledged_risk: liveAckRisk,
+                      demo_tested: liveAckDemo,
+                    });
+                    const ov = await api.getOverview();
+                    setOverview(ov);
+                    setShowLiveModal(false);
+                    setExecutionFeedback('Live Trading Unlocked.');
+                  } catch (e: any) {
+                    alert(e.message);
+                  }
+                }}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white cursor-pointer"
+              >
+                Authorize Live Mode
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export default App;
+

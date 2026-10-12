@@ -103,7 +103,11 @@ DEFAULT_RISK_CONFIG: Dict[str, Any] = {
         "GBPUSD": 2.5,
         "USDJPY": 2.2,
         "XAUUSD": 35.0,
-        "DEFAULT": 3.0,
+        "BTCUSD": 45.0,
+        "NAS100": 3.5,
+        "US30": 4.5,
+        "GBPJPY": 3.2,
+        "DEFAULT": 5.0,
     },
     "max_spread_to_sl_ratio": 0.20,      # Spread must not exceed 20% of SL distance
     "max_total_exposure_lots": 5.0,
